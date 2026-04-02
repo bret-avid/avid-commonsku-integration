@@ -85,6 +85,8 @@ LOCATIONS_SEPARATE = {
     "satin care tear away label",
     "woven brand clip label",
     "tech pack",
+    "hang tag",
+    "hangtag",
 }
 
 

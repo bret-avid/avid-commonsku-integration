@@ -76,8 +76,16 @@ def parse_order_header(text):
     m = re.search(r"\b(USD|CAD)\b", text)
     order["currency"] = m.group(1) if m else None
 
-    # Production notes: all-caps block before "Questions about this sales order?"
+    # Production notes: instruction block before "Questions about this sales order?"
+    # Try all-caps first, fall back to any mixed-case sentence that isn't a garment description
     m = re.search(r"\n([A-Z][A-Z0-9 ,.\-!]+[!.])\s*\n(?:Questions|SUBTOTAL)", text)
+    if not m:
+        m = re.search(r"\n([A-Z][^\n]{10,}[!.])\s*\n(?:Questions|SUBTOTAL)", text)
+        if m and re.search(
+            r"\b(oz\.|gsm|cotton|polyester|ring.spun|seamed|tape|shrinkage)\b",
+            m.group(1), re.IGNORECASE
+        ):
+            m = None
     order["production_notes"] = m.group(1).strip() if m else None
 
     for pattern, key in [
