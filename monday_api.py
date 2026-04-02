@@ -424,9 +424,15 @@ def process_pdf(pdf_path, dry_run=False):
             parts.append(f"{created_count} created")
         if updated_count:
             parts.append(f"{updated_count} updated")
+
+        # Build Monday item links
+        base_url = f"https://avidapparel.monday.com/boards/{BOARD_ID}/items"
+        item_links = " | ".join(f"<{base_url}/{item_id}|View item>" for item_id in upserted_ids)
+
         notify_slack(
             f"*SO {so_number} processed* — {client}\n"
-            f"{', '.join(parts)} from {Path(pdf_path).name}",
+            f"{', '.join(parts)} from {Path(pdf_path).name}\n"
+            f"{item_links}",
             level="success"
         )
 
