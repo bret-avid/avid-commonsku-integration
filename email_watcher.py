@@ -23,6 +23,7 @@ import os
 import sys
 import base64
 import time
+import re
 import tempfile
 import logging
 from pathlib import Path
@@ -221,13 +222,13 @@ def process_message(service, message_id):
     for filename, pdf_bytes in pdfs:
         logger.info(f"  Processing attachment: {filename}")
 
-        # Write PDF to a temp file for the pipeline
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(pdf_bytes)
-            tmp_path = tmp.name
+        # Write PDF to a temp file using the original filename
+        safe_filename = re.sub(r'[^\w\s\-.]', '_', filename)  # sanitise for filesystem
+        tmp_path = Path(tempfile.gettempdir()) / safe_filename
+        tmp_path.write_bytes(pdf_bytes)
 
         try:
-            process_pdf(tmp_path)
+            process_pdf(str(tmp_path))
         except Exception as e:
             any_failed = True
             logger.error(f"  Failed to process {filename}: {e}")
