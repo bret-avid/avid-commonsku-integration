@@ -1,0 +1,31 @@
+# Environment — never commit credentials
+.env
+.env.*
+!.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+avid-env/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PDFs — sales orders contain client data, don't commit them
+*.pdf
+
+# Excel exports
+*.xlsx
+*.xls
