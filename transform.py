@@ -50,6 +50,21 @@ SPECIALTY_INK_KEYWORDS = [
     "suede",
 ]
 
+# ---------------------------------------------------------------------------
+# Client-level overrides
+# Fields listed here will be forced to YES for matching clients,
+# regardless of what the PDF says. Add clients as needed.
+# Keys are lowercase substrings to match against the client name.
+# ---------------------------------------------------------------------------
+
+CLIENT_OVERRIDES = {
+    # Format: "client name substring (lowercase)": {"FIELD": "VALUE", ...}
+    # Example:
+    # "troll co": {"BARCODE NEEDED": "YES", "POLY BAG": "YES"},
+}
+
+
+# ---------------------------------------------------------------------------
 # Valid LOCATIONS dropdown options from Monday board (exact match required)
 # Anything not in this set is a finishing/label field handled separately
 VALID_LOCATIONS = {
@@ -276,6 +291,29 @@ def _yes_no_flags(decoration_locations, services, full_text):
 # Main transform
 # ---------------------------------------------------------------------------
 
+def _is_troll_co(client_name):
+    """Returns True if the client is Troll Co. (case-insensitive, handles variants)."""
+    if not client_name:
+        return False
+    normalised = client_name.lower().replace(" ", "").replace(".", "")
+    return "trollco" in normalised
+
+
+def _apply_client_overrides(flags, client_name):
+    """
+    Apply client-level overrides to YES/NO flags.
+    Overrides are additive — they can only force YES, never force NO.
+    """
+    if not client_name:
+        return flags
+    client_lower = client_name.lower()
+    for substring, overrides in CLIENT_OVERRIDES.items():
+        if substring in client_lower:
+            for field, value in overrides.items():
+                flags[field] = value
+    return flags
+
+
 def to_monday(order, product, full_text=""):
     """
     Takes an order-level dict and a single product dict from the parser,
@@ -289,6 +327,7 @@ def to_monday(order, product, full_text=""):
         order.get("services", []),
         full_text
     )
+    flags = _apply_client_overrides(flags, order.get("client"))
 
     monday = {
         # Order-level fields
@@ -318,6 +357,9 @@ def to_monday(order, product, full_text=""):
 
         # YES/NO finishing flags
         **flags,
+
+        # Troll Co order flag
+        "Troll Co Order?":        "YES" if _is_troll_co(order.get("client", "")) else "NO",
 
         # Always blank on creation — filled manually or operationally
         "ACCOUNT REP":            None,

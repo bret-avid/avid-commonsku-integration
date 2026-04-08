@@ -53,6 +53,7 @@ COLUMN_MAP = {
     "POLY BAG":               "label8",
     "BARCODE NEEDED":         "dup__of_poly_bag",
     "CURRENCY":               None,
+    "Troll Co Order?":        "color_mm092wkj",
 }
 
 # Maps parsed terms strings to Monday's exact status labels
@@ -176,7 +177,8 @@ def _build_column_values(monday_dict):
             column_values[column_id] = {"label": label}
 
         elif field_name in (
-            "CLIP LABEL NEEDED?", "HANG TAG", "POLY BAG", "BARCODE NEEDED", "NECK TAG TYPE",
+            "CLIP LABEL NEEDED?", "HANG TAG", "POLY BAG", "BARCODE NEEDED",
+            "NECK TAG TYPE", "Troll Co Order?",
         ):
             column_values[column_id] = {"label": str(value)}
 
@@ -426,7 +428,7 @@ def process_pdf(pdf_path, dry_run=False):
             parts.append(f"{updated_count} updated")
 
         # Build Monday item links
-        base_url = f"https://avidapparel.monday.com/boards/{BOARD_ID}/items"
+        base_url = f"https://avidapparel.monday.com/boards/{BOARD_ID}/pulses"
         item_links = " | ".join(f"<{base_url}/{item_id}|View item>" for item_id in upserted_ids)
 
         notify_slack(
