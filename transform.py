@@ -212,44 +212,42 @@ def _decoration_type(imprint_types, full_text):
 
 def _neck_tag_type(decoration_locations, full_text):
     """
-    Returns 'PRINT - REPEAT', 'PRINT - NEW', or None.
-    PRINT - NEW:    "Printed Neck Tag" in decoration locations, first time.
-    PRINT - REPEAT: above + design name contains "RN" or artwork notes say "Repeat of PO".
-    """
-    has_printed_neck = any(
-        "printed neck tag" in loc.lower() for loc in decoration_locations
-    )
-    if not has_printed_neck:
-        return None
+    Returns NECK TAG TYPE value based on what's in the decoration locations.
 
+    Printed neck tag:
+      PRINT - NEW    — Printed Neck Tag location, no repeat markers
+      PRINT - REPEAT — Printed Neck Tag location + RN in design name or "Repeat of PO"
+
+    Woven neck label:
+      WOVEN - NEW    — woven/neck label location, no repeat markers
+      WOVEN - REPEAT — woven/neck label location + repeat markers
+
+    Woven takes priority if both are present (unusual but possible).
+    """
     is_repeat = bool(
         re.search(r"\bRN\b", full_text) or
         re.search(r"Repeat of PO", full_text, re.IGNORECASE)
     )
-    return "PRINT - REPEAT" if is_repeat else "PRINT - NEW"
+
+    has_woven_neck = any(
+        any(kw in loc.lower() for kw in ["woven neck", "woven label", "neck label", "woven clip"])
+        and "hem" not in loc.lower()  # exclude woven hem labels — those are clip labels
+        for loc in decoration_locations
+    )
+    if has_woven_neck:
+        return "WOVEN - REPEAT" if is_repeat else "WOVEN - NEW"
+
+    has_printed_neck = any("printed neck tag" in loc.lower() for loc in decoration_locations)
+    if has_printed_neck:
+        return "PRINT - REPEAT" if is_repeat else "PRINT - NEW"
+
+    return None
 
 
 def _neck_tag_details(full_text):
     """
-    Extract the neck tag design name (e.g. 'TC6040N RN - 2025').
-    Looks for a DESIGN NAME associated with a Printed Neck Tag location.
-    """
-    # Find design blocks where DESIGN LOCATION = Printed Neck Tag
-    blocks = re.split(r"(?=DESIGN NAME)", full_text)
-    for block in blocks:
-        if "Printed Neck Tag" in block or "printed neck tag" in block.lower():
-            m = re.search(r"DESIGN NAME\s+(.+)", block)
-            if m:
-                name = m.group(1).strip()
-                # Skip mockup entries
-                if "mockup" not in name.lower():
-                    return name
-    return None
-
-
-def _clip_label_details(full_text):
-    """
-    Extract the clip/woven label design name if present.
+    Extract the neck tag design name for both printed and woven neck tags.
+    Checks for Printed Neck Tag first, then woven neck label locations.
     """
     blocks = re.split(r"(?=DESIGN NAME)", full_text)
     for block in blocks:
@@ -257,7 +255,39 @@ def _clip_label_details(full_text):
         if not loc_m:
             continue
         loc = loc_m.group(1).lower()
-        if "clip label" in loc or "woven label" in loc or "woven neck" in loc:
+        is_neck = (
+            "printed neck tag" in loc or
+            ("woven" in loc and "neck" in loc and "hem" not in loc) or
+            ("neck label" in loc and "hem" not in loc)
+        )
+        if is_neck:
+            name_m = re.search(r"DESIGN NAME\s+(.+)", block)
+            if name_m:
+                name = name_m.group(1).strip()
+                if "mockup" not in name.lower():
+                    return name
+    return None
+
+
+def _clip_label_details(full_text):
+    """
+    Extract the clip/woven label design name.
+    Only matches hem/side clip labels, NOT woven neck labels
+    (those go into NECK TAG DETAILS instead).
+    """
+    blocks = re.split(r"(?=DESIGN NAME)", full_text)
+    for block in blocks:
+        loc_m = re.search(r"DESIGN LOCATION\s+(.+)", block)
+        if not loc_m:
+            continue
+        loc = loc_m.group(1).lower()
+        is_clip = (
+            "clip label" in loc or
+            ("woven label" in loc and "neck" not in loc) or
+            ("woven" in loc and "hem" in loc) or
+            ("woven" in loc and "side" in loc)
+        )
+        if is_clip:
             name_m = re.search(r"DESIGN NAME\s+(.+)", block)
             if name_m:
                 name = name_m.group(1).strip()
@@ -275,15 +305,33 @@ def _yes_no_flags(decoration_locations, services, full_text):
     svc_text = " ".join(s["service"] for s in services).lower()
     combined = loc_text + " " + svc_text
 
+    # Woven neck labels are NOT clip labels — split the detection
+    loc_str = " ".join(decoration_locations).lower()
+    svc_str = " ".join(s["service"] for s in services).lower()
+
+    # Clip label: woven hem/side labels, explicit clip labels
+    is_clip = any(
+        ("clip label" in t.lower()) or
+        ("woven label" in t.lower() and "neck" not in t.lower()) or
+        ("woven" in t.lower() and "hem" in t.lower())
+        for t in decoration_locations + [s["service"] for s in services]
+        if isinstance(t, str)
+    )
+
+    # Hang tag: explicit hang tag location/service OR neck label in services
+    is_hang_tag = (
+        "hang tag" in loc_str or "hangtag" in loc_str or
+        "hang tag" in svc_str or "hangtag" in svc_str or
+        "neck label" in svc_str
+    )
+
     return {
-        "CLIP LABEL NEEDED?": "YES" if any(
-            kw in combined for kw in ["clip label", "woven label", "woven neck"]
-        ) else "NO",
-        "HANG TAG": "YES" if ("hang tag" in combined or "hangtag" in combined) else "NO",
+        "CLIP LABEL NEEDED?": "YES" if is_clip else "NO",
+        "HANG TAG":           "YES" if is_hang_tag else "NO",
         "POLY BAG": "YES" if any(
-            kw in combined for kw in ["poly bag", "bagging", "polybag"]
+            kw in loc_str + " " + svc_str for kw in ["poly bag", "bagging", "polybag"]
         ) else "NO",
-        "BARCODE NEEDED": "YES" if "barcode" in combined else "NO",
+        "BARCODE NEEDED": "YES" if "barcode" in loc_str + " " + svc_str else "NO",
     }
 
 
