@@ -21,20 +21,24 @@ from datetime import datetime
 # ---------------------------------------------------------------------------
 
 IMPRINT_TYPE_MAP = {
-    "screenprinting":     "SCREEN PRINT",
-    "embroidery":         "EMBROIDERY",
-    "dtf":                "DTF",
-    "direct to garment":  "DTF",
-    "direct to film":     "DTF",
-    "heat transfer":      "SCREEN PRINT",   # closest Monday equivalent
-    "patch":              "PATCHES",
-    "chenille patch":     "CHENILLE PATCH",
-    "dtf patch":          "DTF PATCH",
-    "tackle twill":       "Tackle Twill",
-    "applique":           "APPLIQUE",
-    "flocking":           "FLOCKING",
-    "pad printing":       "PAD PRINTING",
-    "custom fabric label": None,            # not a decoration type — drives label flags
+    "screenprinting":                    "SCREEN PRINT",
+    "embroidery":                        "EMBROIDERY",
+    "dtf":                               "DTF",
+    "direct to film":                    "DTF",
+    "dtg":                               "DTF",   # Monday uses DTF for DTG
+    "direct to garment":                 "DTF",
+    "digital direct to garment":         "DTF",
+    "digital direct to garment (dtg)":   "DTF",
+    "heat transfer":                     "SCREEN PRINT",
+    "patch":                             "PATCHES",
+    "chenille patch":                    "CHENILLE PATCH",
+    "dtf patch":                         "DTF PATCH",
+    "tackle twill":                      "Tackle Twill",
+    "applique":                          "APPLIQUE",
+    "flocking":                          "FLOCKING",
+    "pad printing":                      "PAD PRINTING",
+    "custom fabric label":               None,   # drives label flags, not decoration type
+    "other":                             None,   # mockups etc
 }
 
 SPECIALTY_INK_KEYWORDS = [
@@ -102,6 +106,7 @@ LOCATIONS_SEPARATE = {
     "tech pack",
     "hang tag",
     "hangtag",
+    "hang tag reference",
 }
 
 
@@ -141,10 +146,20 @@ def _in_hands_date(date_str):
 
 # Normalise PDF location names to Monday dropdown values
 LOCATION_NORMALISE = {
+    # Centre/Center spelling variants
     "FRONT CENTRE":             "FRONT CENTER",
     "BACK CENTRE":              "BACK CENTER",
     "FRONT CENTER":             "FRONT CENTER",
     "BACK CENTER":              "BACK CENTER",
+    # "Print" suffix variants — strip the qualifier, keep the location
+    "FRONT CHEST PRINT":        "FRONT CHEST",
+    "LEFT CHEST PRINT":         "LEFT CHEST",
+    "BACK PRINT":               "BACK PRINT",
+    "FULL BACK PRINT":          "FULL BACK",
+    "FRONT PRINT":              "FRONT CHEST",
+    "BACK CENTER PRINT":        "BACK CENTER",
+    "FRONT CENTRE PRINT":       "FRONT CENTER",
+    "BACK CENTRE PRINT":        "BACK CENTER",
     # Hat locations
     "HAT - FRONT":              "HAT - FRONT",
     "HAT - BACK CENTER":        "HAT - BACK CENTER",
@@ -152,8 +167,7 @@ LOCATION_NORMALISE = {
     "HAT - LEFT SIDE":          "HAT - LEFT SIDE",
     "HAT - RIGHT SIDE":         "HAT - RIGHT SIDE",
     "HAT INTERIOR LABEL":       "Hat Interior label",
-    "HAT INTERIOR LABEL":       "Hat Interior label",
-    # Hat embroidery descriptor style (e.g. "Front Centre", "Back Centre")
+    # Hat embroidery descriptor style
     "LEFT SIDE - EMBROIDERY":   "HAT - LEFT SIDE",
     "RIGHT SIDE - EMBROIDERY":  "HAT - RIGHT SIDE",
     "BACK - EMBROIDERY":        "HAT - BACK CENTER",
@@ -321,6 +335,7 @@ def _yes_no_flags(decoration_locations, services, full_text):
     # Hang tag: explicit hang tag location/service OR neck label in services
     is_hang_tag = (
         "hang tag" in loc_str or "hangtag" in loc_str or
+        "hang tag reference" in loc_str or
         "hang tag" in svc_str or "hangtag" in svc_str or
         "neck label" in svc_str
     )
