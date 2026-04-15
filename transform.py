@@ -154,12 +154,12 @@ LOCATION_NORMALISE = {
     # "Print" suffix variants — strip the qualifier, keep the location
     "FRONT CHEST PRINT":        "FRONT CHEST",
     "LEFT CHEST PRINT":         "LEFT CHEST",
-    "BACK PRINT":               "BACK PRINT",
+    "BACK PRINT":               "FULL BACK",
     "FULL BACK PRINT":          "FULL BACK",
     "FRONT PRINT":              "FRONT CHEST",
-    "BACK CENTER PRINT":        "BACK CENTER",
+    "BACK CENTER PRINT":        "FULL BACK",
     "FRONT CENTRE PRINT":       "FRONT CENTER",
-    "BACK CENTRE PRINT":        "BACK CENTER",
+    "BACK CENTRE PRINT":        "FULL BACK",
     # Hat locations
     "HAT - FRONT":              "HAT - FRONT",
     "HAT - BACK CENTER":        "HAT - BACK CENTER",
