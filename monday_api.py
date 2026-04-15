@@ -54,6 +54,10 @@ COLUMN_MAP = {
     "BARCODE NEEDED":         "dup__of_poly_bag",
     "CURRENCY":               None,
     "Troll Co Order?":        "color_mm092wkj",
+    "REPEAT ORDER?":          "repeat_order_",
+    "PO VALUE":               "numeric8",
+    "Troll Co Style #":       "text_mm03p9v6",
+    "ARTWORK":                "dup__of_urgent___notes",
 }
 
 # Maps parsed terms strings to Monday's exact status labels
@@ -166,8 +170,8 @@ def _build_column_values(monday_dict):
         if field_name == "Customer Expected Date":
             column_values[column_id] = {"date": str(value)}
 
-        elif field_name == "TTL SO QUANTITY":
-            column_values[column_id] = value  # plain int
+        elif field_name in ("TTL SO QUANTITY", "PO VALUE"):
+            column_values[column_id] = value  # plain int/float
 
         elif field_name in ("DECORATION TYPE", "LOCATIONS"):
             column_values[column_id] = {"labels": _split_top_level(str(value))}
@@ -178,7 +182,7 @@ def _build_column_values(monday_dict):
 
         elif field_name in (
             "CLIP LABEL NEEDED?", "HANG TAG", "POLY BAG", "BARCODE NEEDED",
-            "NECK TAG TYPE", "Troll Co Order?",
+            "NECK TAG TYPE", "Troll Co Order?", "REPEAT ORDER?",
         ):
             column_values[column_id] = {"label": str(value)}
 

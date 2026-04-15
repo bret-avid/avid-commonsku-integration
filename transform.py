@@ -377,6 +377,85 @@ def _apply_client_overrides(flags, client_name):
     return flags
 
 
+def _best_product_title(full_text):
+    """
+    Find the most complete product title line.
+    Prefers /// lines but falls back to // lines if the /// line is truncated
+    (i.e. doesn't contain a TC number when one exists elsewhere in the text).
+    """
+    import re as _re
+    triple = _re.search(r'[^\n]*///[^\n]+', full_text)
+    # Find // lines, explicitly skipping any that are actually /// lines
+    double = None
+    for line in full_text.split('\n'):
+        if '//' in line and '///' not in line and _re.search(r'\bTC\d{3,}\b', line):
+            double = line.strip()
+            break
+
+    # If /// line contains a TC number, use it
+    if triple and _re.search(r'\bTC\d{3,}\b', triple.group(0)):
+        return triple.group(0).strip()
+    # Fall back to // line if it has TC number (/// line may be truncated)
+    if double and _re.search(r'\bTC\d{3,}\b', double):
+        return double
+    # Default to /// line
+    return triple.group(0).strip() if triple else ''
+
+
+def _get_tc_number(full_text):
+    """
+    Extract the TC style number (e.g. TC2320) from the best product title line,
+    falling back to DESIGN NAME lines if not found in the title.
+    """
+    import re as _re
+    title = _best_product_title(full_text)
+    tc = _re.search(r'\bTC(\d{3,})\b', title)
+    if tc:
+        return f"TC{tc.group(1)}"
+    # Final fallback: first TC#### anywhere in the text
+    for line in full_text.split('\n'):
+        tc = _re.search(r'\bTC(\d{3,})\b', line)
+        if tc:
+            return f"TC{tc.group(1)}"
+    return None
+
+
+def _get_artwork_name(full_text):
+    """
+    Extract the artwork/product name from the best product title line.
+    Title structure: CLIENT_PO///STYLE DESC - COLOUR - TC#### - ARTWORK NAME - decoration
+    Artwork name is the segment immediately after TC#### and before the decoration suffix.
+    """
+    import re as _re
+    title = _best_product_title(full_text)
+    if not title:
+        return None
+
+    tc_match = _re.search(r'\bTC\d{3,}\b', title)
+    if not tc_match:
+        return None
+
+    after_tc = title[tc_match.end():]
+    after_tc = _re.sub(r'^\s*[-\s]+', '', after_tc)
+
+    decoration_kw = (r'Left Chest|Right Chest|Front Chest|Back Print|Full Back|'
+                     r'Front Center|Left Sleeve|Right Sleeve|Hat|Replen|Replenishment')
+    loc_match = _re.search(r'\s*-\s*(?:' + decoration_kw + r')', after_tc, _re.IGNORECASE)
+    if loc_match:
+        return after_tc[:loc_match.start()].strip() or None
+    dash_match = _re.search(r'\s*-\s*', after_tc)
+    return after_tc[:dash_match.start()].strip() if dash_match else after_tc.strip() or None
+
+
+def _is_repeat_order(full_text):
+    """
+    Returns True if any artwork description contains the word 'repeat'.
+    Catches: 'Repeat of PO', 'Repeat PO', 'RN' (repeat neck), 'replenishment', etc.
+    """
+    import re as _re
+    return bool(_re.search(r'\brepeat\b', full_text, _re.IGNORECASE))
+
+
 def to_monday(order, product, full_text=""):
     """
     Takes an order-level dict and a single product dict from the parser,
@@ -423,6 +502,16 @@ def to_monday(order, product, full_text=""):
 
         # Troll Co order flag
         "Troll Co Order?":        "YES" if _is_troll_co(order.get("client", "")) else "NO",
+
+        # Troll Co specific fields — only populated for Troll Co orders
+        "Troll Co Style #":       _get_tc_number(full_text) if _is_troll_co(order.get("client", "")) else None,
+        "ARTWORK":                _get_artwork_name(full_text) if _is_troll_co(order.get("client", "")) else None,
+
+        # Repeat order detection
+        "REPEAT ORDER?":          "REPEAT ORDER" if _is_repeat_order(full_text) else "NEW ORDER",
+
+        # PO value from subtotal
+        "PO VALUE":               order.get("subtotal"),
 
         # Always blank on creation — filled manually or operationally
         "ACCOUNT REP":            None,
