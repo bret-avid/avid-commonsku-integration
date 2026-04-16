@@ -171,6 +171,9 @@ def _build_column_values(monday_dict):
             column_values[column_id] = {"date": str(value)}
 
         elif field_name in ("TTL SO QUANTITY", "PO VALUE"):
+            # Monday numeric columns reject comma-formatted strings (e.g. "13,860.00")
+            if isinstance(value, str):
+                value = float(value.replace(",", ""))
             column_values[column_id] = value  # plain int/float
 
         elif field_name in ("DECORATION TYPE", "LOCATIONS"):
