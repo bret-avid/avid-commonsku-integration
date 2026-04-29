@@ -35,12 +35,42 @@ _SKIP_HEADER = re.compile(
 )
 
 
+def _is_doubled_line(line):
+    """True if >40% of adjacent character pairs are identical (doubled-font artifact)."""
+    if len(line) < 4:
+        return False
+    pairs = sum(1 for i in range(len(line) - 1) if line[i] == line[i + 1])
+    return pairs / (len(line) - 1) >= 0.4
+
+
+def _dedouble_text(text):
+    """
+    Some PDFs render headers with each character doubled due to overlapping font layers.
+    De-double each affected line separately; if the next line is also doubled, concatenate
+    their de-doubled results (handles mid-word line wraps without over-merging).
+    """
+    lines = text.split('\n')
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if _is_doubled_line(line):
+            dedoubled = re.sub(r'(.)\1', r'\1', line)
+            if i + 1 < len(lines) and _is_doubled_line(lines[i + 1]):
+                dedoubled += re.sub(r'(.)\1', r'\1', lines[i + 1])
+                i += 1
+            line = dedoubled
+        out.append(line)
+        i += 1
+    return '\n'.join(out)
+
+
 def extract_text(pdf_path):
     full_text = ""
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             full_text += page.extract_text() + "\n"
-    return full_text
+    return _dedouble_text(full_text)
 
 
 def parse_order_header(text):

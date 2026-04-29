@@ -233,7 +233,7 @@ def find_existing_items(so_number):
 def update_item(item_id, monday_dict, dry_run=False):
     """Update an existing Monday item with new column values."""
     column_values = _build_column_values(monday_dict)
-    item_name = monday_dict.get("Name", "Unnamed Item")
+    item_name = monday_dict.get("Name") or "Unnamed Item"
 
     if dry_run:
         print(f"\n[DRY RUN] Would UPDATE existing Monday item {item_id}:")
@@ -281,7 +281,7 @@ def upsert_item(monday_dict, line_index, existing_items, dry_run=False):
     if not GROUP_ID and line_index >= len(existing_items):
         raise RuntimeError("MONDAY_GROUP_ID not set. Run --list-groups to find it.")
 
-    item_name = monday_dict.get("Name", "Unnamed Item")
+    item_name = monday_dict.get("Name") or "Unnamed Item"
     column_values = _build_column_values(monday_dict)
 
     if line_index < len(existing_items):
