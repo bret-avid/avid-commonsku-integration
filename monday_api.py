@@ -91,6 +91,8 @@ def _run_query(query, variables=None):
     if variables:
         payload["variables"] = variables
     resp = requests.post(MONDAY_API_URL, headers=_headers(), json=payload, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"Monday API {resp.status_code}: {resp.text[:500]}")
     resp.raise_for_status()
     data = resp.json()
     if "errors" in data:
