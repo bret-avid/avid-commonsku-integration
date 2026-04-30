@@ -447,6 +447,29 @@ def _get_artwork_name(full_text):
     return after_tc[:dash_match.start()].strip() if dash_match else after_tc.strip() or None
 
 
+def _primary_design_name(full_text):
+    """
+    Extract the first non-neck-tag, non-mockup DESIGN NAME from artwork detail blocks.
+    Used for the ARTWORK field on non-Troll Co orders.
+    """
+    skip_locs = LOCATIONS_SEPARATE | {"mockup for production", "mockup"}
+    blocks = re.split(r"(?=DESIGN NAME)", full_text)
+    for block in blocks:
+        name_m = re.search(r"DESIGN NAME\s+(.+)", block)
+        if not name_m:
+            continue
+        name = name_m.group(1).strip()
+        if "mockup" in name.lower():
+            continue
+        loc_m = re.search(r"DESIGN LOCATION\s+(.+)", block)
+        if loc_m:
+            loc = loc_m.group(1).strip().lower()
+            if any(excl in loc for excl in skip_locs):
+                continue
+        return name
+    return None
+
+
 def _is_repeat_order(full_text):
     """
     Returns True if any artwork description contains the word 'repeat'.
@@ -505,7 +528,7 @@ def to_monday(order, product, full_text=""):
 
         # Troll Co specific fields — only populated for Troll Co orders
         "Troll Co Style #":       _get_tc_number(full_text) if _is_troll_co(order.get("client", "")) else None,
-        "ARTWORK":                _get_artwork_name(full_text) if _is_troll_co(order.get("client", "")) else None,
+        "ARTWORK":                _get_artwork_name(full_text) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text),
 
         # Repeat order detection
         "REPEAT ORDER?":          "REPEAT ORDER" if _is_repeat_order(full_text) else "NEW ORDER",
