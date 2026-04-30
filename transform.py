@@ -447,11 +447,38 @@ def _get_artwork_name(full_text):
     return after_tc[:dash_match.start()].strip() if dash_match else after_tc.strip() or None
 
 
-def _primary_design_name(full_text):
+def _primary_design_name(full_text, color=None):
     """
-    Extract the first non-neck-tag, non-mockup DESIGN NAME from artwork detail blocks.
-    Used for the ARTWORK field on non-Troll Co orders.
+    Extract artwork name for non-Troll Co orders.
+    Prefers the // title line: splits by ' - ', takes segments after the color,
+    strips trailing BULK QTY / Replen suffixes, joins with space.
+    Falls back to first non-neck-tag DESIGN NAME block.
     """
+    lines = full_text.split('\n')
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if '//' not in stripped or '///' in stripped:
+            continue
+        combined = stripped
+        if stripped.endswith('-') and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            if nxt and not re.match(r'^(SHIPPING|BILLING|TERMS|Page \d)', nxt):
+                combined = stripped + ' ' + nxt
+        if color:
+            parts = combined.split(' - ')
+            color_idx = next(
+                (j for j, p in enumerate(parts) if color.lower() in p.lower()), None
+            )
+            if color_idx is not None:
+                remaining = parts[color_idx + 1:]
+                suffix_re = re.compile(r'^(BULK\s*QTY|Replen\b|Replenishment)$', re.IGNORECASE)
+                while remaining and suffix_re.match(remaining[-1].strip()):
+                    remaining.pop()
+                if remaining:
+                    return ' '.join(p.strip() for p in remaining)
+        break
+
+    # Fallback: first non-neck-tag, non-mockup DESIGN NAME
     skip_locs = LOCATIONS_SEPARATE | {"mockup for production", "mockup"}
     blocks = re.split(r"(?=DESIGN NAME)", full_text)
     for block in blocks:
@@ -528,7 +555,7 @@ def to_monday(order, product, full_text=""):
 
         # Troll Co specific fields — only populated for Troll Co orders
         "Troll Co Style #":       _get_tc_number(full_text) if _is_troll_co(order.get("client", "")) else None,
-        "ARTWORK":                _get_artwork_name(full_text) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text),
+        "ARTWORK":                _get_artwork_name(full_text) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text, product.get("color")),
 
         # Repeat order detection
         "REPEAT ORDER?":          "REPEAT ORDER" if _is_repeat_order(full_text) else "NEW ORDER",
