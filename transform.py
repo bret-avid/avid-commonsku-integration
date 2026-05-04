@@ -216,10 +216,8 @@ def _decoration_type(imprint_types, full_text):
     has_neon = "neon" in text_lower
     has_puff = any(kw in text_lower for kw in ["puff", "hd ink", "gloss", "foil"])
 
-    if has_puff or (has_glow and not has_neon):
+    if has_puff or has_glow or has_neon:
         base_types.append("**SPECIALTY INK (PUFF, HD, GLOSS, GLOW IN THE DARK")
-    elif has_glow or has_neon:
-        base_types.append("**SPECIALTY INK (GLOW IN THE DARK, NEON)")
 
     return ", ".join(base_types)
 
