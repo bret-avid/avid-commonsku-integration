@@ -249,7 +249,10 @@ def _neck_tag_type(decoration_locations, full_text):
     if has_woven_neck:
         return "WOVEN - REPEAT" if is_repeat else "WOVEN - NEW"
 
-    has_printed_neck = any("printed neck tag" in loc.lower() for loc in decoration_locations)
+    has_printed_neck = any(
+        "printed neck tag" in loc.lower() or "heat transfer neck tag" in loc.lower()
+        for loc in decoration_locations
+    )
     if has_printed_neck:
         return "PRINT - REPEAT" if is_repeat else "PRINT - NEW"
 
@@ -269,6 +272,7 @@ def _neck_tag_details(full_text):
         loc = loc_m.group(1).lower()
         is_neck = (
             "printed neck tag" in loc or
+            "heat transfer neck tag" in loc or
             ("woven" in loc and "neck" in loc and "hem" not in loc) or
             ("neck label" in loc and "hem" not in loc)
         )
