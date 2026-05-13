@@ -249,7 +249,10 @@ def _neck_tag_type(decoration_locations, full_text):
     if has_woven_neck:
         return "WOVEN - REPEAT" if is_repeat else "WOVEN - NEW"
 
-    has_printed_neck = any("printed neck tag" in loc.lower() for loc in decoration_locations)
+    has_printed_neck = any(
+        "printed neck tag" in loc.lower() or "heat transfer neck tag" in loc.lower()
+        for loc in decoration_locations
+    )
     if has_printed_neck:
         return "PRINT - REPEAT" if is_repeat else "PRINT - NEW"
 
@@ -269,6 +272,7 @@ def _neck_tag_details(full_text):
         loc = loc_m.group(1).lower()
         is_neck = (
             "printed neck tag" in loc or
+            "heat transfer neck tag" in loc or
             ("woven" in loc and "neck" in loc and "hem" not in loc) or
             ("neck label" in loc and "hem" not in loc)
         )
@@ -377,26 +381,31 @@ def _apply_client_overrides(flags, client_name):
 
 def _best_product_title(full_text):
     """
-    Find the most complete product title line.
-    PDFs render the title twice — truncated in the product column and full near
-    the decoration block. Pick the longest /// line that contains a TC number so
-    we always get the complete artwork name.
+    Find the most complete product title line for artwork name extraction.
+    PDFs sometimes render the title across two lines: a truncated /// line and a
+    plain continuation line that starts with TC#### and the full artwork name.
+    The line with the most content AFTER the TC number is the most complete.
+    DESIGN NAME lines are excluded — they describe decoration, not the product title.
+    Falls back to the longest /// line when no TC number appears anywhere.
     """
     import re as _re
-    triple_lines = _re.findall(r'[^\n]*///[^\n]+', full_text)
-    # Find // lines, explicitly skipping any that are actually /// lines
-    double = None
+    best_line = ''
+    best_after_len = -1
     for line in full_text.split('\n'):
-        if '//' in line and '///' not in line and _re.search(r'\bTC\d{3,}\b', line):
-            double = line.strip()
-            break
-
-    # Prefer longest /// line containing a TC number
-    tc_triples = [l.strip() for l in triple_lines if _re.search(r'\bTC\d{3,}\b', l)]
-    if tc_triples:
-        return max(tc_triples, key=len)
-    if double:
-        return double
+        line = line.strip()
+        if line.startswith('DESIGN NAME'):
+            continue
+        tc_m = _re.search(r'\bTC\d{3,}\b', line)
+        if not tc_m:
+            continue
+        after_len = len(line) - tc_m.end()
+        if after_len > best_after_len:
+            best_after_len = after_len
+            best_line = line
+    if best_line:
+        return best_line
+    # No TC number found — fall back to longest /// line
+    triple_lines = _re.findall(r'[^\n]*///[^\n]+', full_text)
     return max((l.strip() for l in triple_lines), key=len, default='')
 
 
