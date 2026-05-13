@@ -378,11 +378,12 @@ def _apply_client_overrides(flags, client_name):
 def _best_product_title(full_text):
     """
     Find the most complete product title line.
-    Prefers /// lines but falls back to // lines if the /// line is truncated
-    (i.e. doesn't contain a TC number when one exists elsewhere in the text).
+    PDFs render the title twice — truncated in the product column and full near
+    the decoration block. Pick the longest /// line that contains a TC number so
+    we always get the complete artwork name.
     """
     import re as _re
-    triple = _re.search(r'[^\n]*///[^\n]+', full_text)
+    triple_lines = _re.findall(r'[^\n]*///[^\n]+', full_text)
     # Find // lines, explicitly skipping any that are actually /// lines
     double = None
     for line in full_text.split('\n'):
@@ -390,14 +391,13 @@ def _best_product_title(full_text):
             double = line.strip()
             break
 
-    # If /// line contains a TC number, use it
-    if triple and _re.search(r'\bTC\d{3,}\b', triple.group(0)):
-        return triple.group(0).strip()
-    # Fall back to // line if it has TC number (/// line may be truncated)
-    if double and _re.search(r'\bTC\d{3,}\b', double):
+    # Prefer longest /// line containing a TC number
+    tc_triples = [l.strip() for l in triple_lines if _re.search(r'\bTC\d{3,}\b', l)]
+    if tc_triples:
+        return max(tc_triples, key=len)
+    if double:
         return double
-    # Default to /// line
-    return triple.group(0).strip() if triple else ''
+    return max((l.strip() for l in triple_lines), key=len, default='')
 
 
 def _get_tc_number(full_text):
