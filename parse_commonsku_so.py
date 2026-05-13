@@ -14,6 +14,9 @@ import pdfplumber
 
 def _is_description_line(line):
     """True if line is garment spec copy rather than a product name."""
+    # Product title lines (/// or //) are never descriptions
+    if "//" in line:
+        return False
     # Weight/material specs are always descriptions
     if re.search(r"\b(oz\.|gsm|cotton|polyester|made in|neckline|fit\.|structure\.|finish\.|rib height|ounces|grams|ringspun)\b",
                  line, re.IGNORECASE):
@@ -157,7 +160,7 @@ def _extract_product_name(candidate_lines):
 
     # Look for a line containing an embedded style code (even with PO prefix)
     for i, line in enumerate(reversed(candidate_lines)):
-        style_m = re.search(r"\b([A-Z]{0,4}\d{3,5})\b", line)
+        style_m = re.search(r"\b([A-Z]{0,4}\d{3,5}[A-Z]{0,2})\b", line)
         if style_m and re.search(r"[A-Z]", style_m.group(1)):  # must have at least one letter
             style_code = style_m.group(1)
             after = line[style_m.end():].strip().lstrip('-').strip()
