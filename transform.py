@@ -477,6 +477,14 @@ def _primary_design_name(full_text, color=None):
                 (j for j, p in enumerate(parts) if color.lower() in p.lower()), None
             )
             if color_idx is not None:
+                # Format: DATE//CODE ARTWORK - Color - Suffix
+                # Artwork is before the color in the // segment
+                if '//' in parts[0] and color_idx > 0:
+                    after_slash = parts[0].split('//')[-1]
+                    artwork = re.sub(r'^[A-Z0-9][A-Z0-9-]*\s+', '', after_slash).strip()
+                    if artwork:
+                        return artwork
+                # Fallback: artwork is after the color (other client formats)
                 remaining = parts[color_idx + 1:]
                 suffix_re = re.compile(r'^(BULK\s*QTY|Replen\b|Replenishment)$', re.IGNORECASE)
                 while remaining and suffix_re.match(remaining[-1].strip()):

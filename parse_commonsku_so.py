@@ -21,6 +21,9 @@ def _is_description_line(line):
     if re.search(r"\b(oz\.|gsm|cotton|polyester|made in|neckline|fit\.|structure\.|finish\.|rib height|ounces|grams|ringspun)\b",
                  line, re.IGNORECASE):
         return True
+    # Lines starting with a style code (e.g. AVS5250, AVC61) are product lines
+    if re.match(r'^[A-Z]{1,4}\d{2,}', line):
+        return False
     # Long mixed-case lines are descriptions UNLESS they look like product titles
     # (start with a style code pattern or contain //)
     if len(line) > 80 and sum(1 for c in line if c.islower()) > len(line) * 0.4:
@@ -160,7 +163,7 @@ def _extract_product_name(candidate_lines):
 
     # Look for a line containing an embedded style code (even with PO prefix)
     for i, line in enumerate(reversed(candidate_lines)):
-        style_m = re.search(r"\b([A-Z]{0,4}\d{3,5}[A-Z]{0,2})\b", line)
+        style_m = re.search(r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2})\b", line)
         if style_m and re.search(r"[A-Z]", style_m.group(1)):  # must have at least one letter
             style_code = style_m.group(1)
             after = line[style_m.end():].strip().lstrip('-').strip()
