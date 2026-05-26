@@ -109,6 +109,12 @@ def parse_order_header(text):
     else:
         order["customer_po"] = None
 
+    # Fallback: if PO field was blank in header, extract from "PO# NNNNNN" in title line
+    if not order["customer_po"]:
+        m = re.search(r"PO#\s+(\d{5,})", text)
+        if m:
+            order["customer_po"] = m.group(1)
+
     m = re.search(r"\b(USD|CAD)\b", text)
     order["currency"] = m.group(1) if m else None
 

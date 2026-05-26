@@ -29,6 +29,7 @@ IMPRINT_TYPE_MAP = {
     "direct to garment":                 "DTF",
     "digital direct to garment":         "DTF",
     "digital direct to garment (dtg)":   "DTF",
+    "digital transfer print":            "DTF",
     "heat transfer":                     "SCREEN PRINT",
     "patch":                             "PATCHES",
     "chenille patch":                    "CHENILLE PATCH",
@@ -148,6 +149,8 @@ def _in_hands_date(date_str):
 LOCATION_NORMALISE = {
     # Centre/Center spelling variants
     "FRONT CENTRE":             "FRONT CENTER",
+    "FRONT & CENTRE":           "FRONT CENTER",
+    "FRONT & CENTER":           "FRONT CENTER",
     "BACK CENTRE":              "BACK CENTER",
     "FRONT CENTER":             "FRONT CENTER",
     "BACK CENTER":              "BACK CENTER",
