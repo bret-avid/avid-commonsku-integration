@@ -122,14 +122,16 @@ def _client_name(client):
 
 def _garment_style(style_code):
     """
-    Strip Avid supplier prefix (AV, AVN, AVL, AVB etc.) → numeric only.
+    Strip Avid category prefix (AVN, AVL, AVOC etc.) → numeric only.
+    Plain AV + digits (e.g. AV4502) kept as-is — AV alone is not a category prefix.
     Preserve brand-specific prefixes (TB, TC, HB etc.) as-is.
-    Examples: AVN6210 → 6210, AVL1605 → 1605, TB0063 → TB0063, TC2965 → TC2965
+    Examples: AVN6210 → 6210, AVL1605 → 1605, AVOC9505 → 9505
+              AV4502 → AV4502, TB0063 → TB0063
     """
     if not style_code:
         return None
-    # Only strip if it starts with AV followed by optional single letter then digits
-    stripped = re.sub(r"^AV[A-Z]?(?=\d)", "", style_code)
+    # Strip only when at least one category letter follows AV before the digits
+    stripped = re.sub(r"^AV[A-Z]+(?=\d)", "", style_code)
     return stripped
 
 
