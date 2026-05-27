@@ -167,10 +167,15 @@ def _extract_product_name(candidate_lines):
     if not candidate_lines:
         return None, None
 
-    # Look for a line containing an embedded style code (even with PO prefix)
+    # Look for a line containing an embedded style code (even with PO prefix).
+    # Use finditer so date digits (e.g. "26" in "26.05.26//AV4502") don't shadow the real code.
     for i, line in enumerate(reversed(candidate_lines)):
-        style_m = re.search(r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2})\b", line)
-        if style_m and re.search(r"[A-Z]", style_m.group(1)):  # must have at least one letter
+        style_m = next(
+            (m for m in re.finditer(r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2})\b", line)
+             if re.search(r"[A-Z]", m.group(1))),
+            None,
+        )
+        if style_m:  # must have at least one letter (enforced in finditer filter)
             style_code = style_m.group(1)
             after = line[style_m.end():].strip().lstrip('-').strip()
             # Check if the very next candidate line is a title continuation (not description)

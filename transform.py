@@ -482,20 +482,19 @@ def _primary_design_name(full_text, color=None):
                 (j for j, p in enumerate(parts) if color.lower() in p.lower()), None
             )
             if color_idx is not None:
-                # Format: DATE//CODE ARTWORK - Color - Suffix
-                # Artwork is before the color in the // segment
-                if '//' in parts[0] and color_idx > 0:
-                    after_slash = parts[0].split('//')[-1]
-                    artwork = re.sub(r'^[A-Z0-9][A-Z0-9-]*\s+', '', after_slash).strip()
-                    if artwork:
-                        return artwork
-                # Fallback: artwork is after the color (other client formats)
+                # Format A: artwork is after the color  e.g. "CODE Desc - Color - ArtworkName"
                 remaining = parts[color_idx + 1:]
                 suffix_re = re.compile(r'^(BULK\s*QTY|Replen\b|Replenishment)$', re.IGNORECASE)
                 while remaining and suffix_re.match(remaining[-1].strip()):
                     remaining.pop()
                 if remaining:
                     return ' '.join(p.strip() for p in remaining)
+                # Format B: artwork is before the color  e.g. "DATE//CODE ArtworkName - Color"
+                if '//' in parts[0] and color_idx > 0:
+                    after_slash = parts[0].split('//')[-1]
+                    artwork = re.sub(r'^[A-Z0-9][A-Z0-9-]*\s+', '', after_slash).strip()
+                    if artwork:
+                        return artwork
         break
 
     # Fallback: first non-neck-tag, non-mockup DESIGN NAME
