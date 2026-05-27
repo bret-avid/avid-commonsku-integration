@@ -125,14 +125,17 @@ def _garment_style(style_code):
     Strip Avid category prefix (AVN, AVL, AVOC etc.) → numeric only.
     Plain AV + digits (e.g. AV4502) kept as-is — AV alone is not a category prefix.
     Preserve brand-specific prefixes (TB, TC, HB etc.) as-is.
+    Accepts a list of codes (merged SKUs) and returns comma-separated result.
     Examples: AVN6210 → 6210, AVL1605 → 1605, AVOC9505 → 9505
               AV4502 → AV4502, TB0063 → TB0063
     """
+    if isinstance(style_code, list):
+        return ", ".join(
+            re.sub(r"^AV[A-Z]+(?=\d)", "", c) for c in style_code if c
+        )
     if not style_code:
         return None
-    # Strip only when at least one category letter follows AV before the digits
-    stripped = re.sub(r"^AV[A-Z]+(?=\d)", "", style_code)
-    return stripped
+    return re.sub(r"^AV[A-Z]+(?=\d)", "", style_code)
 
 
 def _in_hands_date(date_str):
@@ -525,6 +528,142 @@ def _is_repeat_order(full_text):
     """
     import re as _re
     return bool(_re.search(r'\brepeat\b', full_text, _re.IGNORECASE))
+
+
+_GARMENT_TYPE_KEYWORDS = [
+    "hoodie", "hoody", "sweatshirt", "crewneck", "crew neck", "pullover",
+    "t-shirt", "tshirt", "tee",
+    "polo",
+    "jacket", "vest",
+    "long sleeve", "longsleeve",
+    "shorts", "pants", "jogger",
+    "hat", "cap", "beanie", "toque",
+]
+
+
+def _garment_type_keyword(product_name):
+    """Return the first garment-type keyword found in product_name, or None."""
+    if not product_name:
+        return None
+    name_lower = product_name.lower()
+    for kw in _GARMENT_TYPE_KEYWORDS:
+        if kw in name_lower:
+            return kw
+    return None
+
+
+def _decoration_locations_key(decoration_locations):
+    """
+    Frozenset of normalised print decoration locations — used as the merge key.
+    Applies the same filtering as _locations(): excludes label/finishing locations
+    and anything not in VALID_LOCATIONS.
+    """
+    locs = set()
+    for loc in decoration_locations:
+        loc_upper = loc.upper().strip()
+        if any(excl in loc.lower() for excl in LOCATIONS_SEPARATE):
+            continue
+        if "mockup" in loc.lower():
+            continue
+        normalised = LOCATION_NORMALISE.get(loc_upper, loc_upper)
+        if normalised.upper() in {v.upper() for v in VALID_LOCATIONS}:
+            locs.add(normalised.upper())
+    return frozenset(locs)
+
+
+def _merge_products(group):
+    """Merge a list of product dicts into one. Caller guarantees len >= 2."""
+    base = dict(group[0])
+
+    # style_code becomes a list so _garment_style can comma-join after prefix-stripping
+    codes = []
+    for p in group:
+        sc = p.get("style_code")
+        if sc and sc not in codes:
+            codes.append(sc)
+    base["style_code"] = codes
+
+    # Sum quantities
+    base["total_units"] = sum(p.get("total_units") or 0 for p in group)
+
+    # Concatenate size breakdowns
+    combined_sizes = []
+    for p in group:
+        combined_sizes.extend(p.get("sizes", []))
+    base["sizes"] = combined_sizes
+
+    # Union decoration locations (preserve first-seen order)
+    seen_locs, all_locs = set(), []
+    for p in group:
+        for loc in p.get("decoration_locations", []):
+            if loc not in seen_locs:
+                all_locs.append(loc)
+                seen_locs.add(loc)
+    base["decoration_locations"] = all_locs
+
+    # Union imprint types
+    seen_types, all_types = set(), []
+    for p in group:
+        for t in p.get("imprint_types", []):
+            if t not in seen_types:
+                all_types.append(t)
+                seen_types.add(t)
+    base["imprint_types"] = all_types
+
+    # Keep the longest/most descriptive product name
+    base["product_name"] = max(
+        (p.get("product_name") or "" for p in group), key=len
+    ) or None
+
+    return base
+
+
+def merge_duplicate_lines(products):
+    """
+    Merge product lines that are the same design on the same garment type/color
+    but sourced from different SKUs (supplier substitution scenario).
+
+    Merge conditions (all must match):
+      - Same colour
+      - Same garment-type keyword in product name (hoodie, tee, etc.)
+      - Same non-label decoration locations (proxy for matching screenprint artwork)
+
+    When a group merges:
+      - style_code  → list of all codes; _garment_style joins them comma-separated
+      - total_units → summed
+      - sizes       → concatenated
+      - decoration_locations / imprint_types → union, first-seen order
+      - product_name → longest wins
+
+    Products that don't match any group (no garment keyword, no print locations)
+    are returned unchanged.
+    """
+    from collections import OrderedDict
+
+    key_groups = OrderedDict()  # merge_key → {"index": int, "products": list}
+    ungrouped = []
+
+    for i, product in enumerate(products):
+        color = (product.get("color") or "").upper()
+        garment_kw = _garment_type_keyword(product.get("product_name"))
+        loc_key = _decoration_locations_key(product.get("decoration_locations", []))
+
+        if garment_kw and loc_key:
+            key = (color, garment_kw, loc_key)
+            if key not in key_groups:
+                key_groups[key] = {"index": i, "products": []}
+            key_groups[key]["products"].append(product)
+        else:
+            ungrouped.append((i, product))
+
+    result_with_index = []
+    for key, group_data in key_groups.items():
+        merged = _merge_products(group_data["products"])
+        result_with_index.append((group_data["index"], merged))
+    result_with_index.extend(ungrouped)
+    result_with_index.sort(key=lambda x: x[0])
+
+    return [p for _, p in result_with_index]
 
 
 def to_monday(order, product, full_text=""):

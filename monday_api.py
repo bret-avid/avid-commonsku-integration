@@ -382,7 +382,16 @@ def process_pdf(pdf_path, dry_run=False):
     so_number = order.get("so_number", "unknown")
     client    = order.get("client", "unknown")
 
-    logger.info(f"SO {so_number} - {client} - {len(order['products'])} product line(s)")
+    from transform import merge_duplicate_lines
+    original_count = len(order["products"])
+    products = merge_duplicate_lines(order["products"])
+    if len(products) < original_count:
+        logger.info(
+            f"  Merged {original_count} product lines → {len(products)} "
+            f"(combined duplicate SKUs)"
+        )
+
+    logger.info(f"SO {so_number} - {client} - {len(products)} product line(s)")
 
     # Find any existing Monday items for this SO number
     # Search runs in both live and dry-run mode so output accurately shows create vs update
@@ -399,9 +408,10 @@ def process_pdf(pdf_path, dry_run=False):
     created_count = 0
     updated_count = 0
 
-    for i, product in enumerate(order["products"]):
+    for i, product in enumerate(products):
         monday_dict = to_monday(order, product, full_text)
-        style = product.get("style_code") or "no style code"
+        sc = product.get("style_code")
+        style = ", ".join(sc) if isinstance(sc, list) else (sc or "no style code")
         color = product.get("color") or "no color"
         action = "Update" if i < len(existing_items) else "Create"
         logger.info(f"  Line {i+1}: [{action}] {style} / {color} / {product.get('total_units')} units")
