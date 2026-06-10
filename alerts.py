@@ -71,11 +71,16 @@ def notify_slack(message, level="error"):
         "unfurl_links": False,
     }
 
-    try:
-        resp = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        resp.raise_for_status()
-    except Exception as e:
-        logger.warning(f"Slack notification failed: {e}")
+    for attempt in range(3):
+        try:
+            resp = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=15)
+            resp.raise_for_status()
+            return
+        except Exception as e:
+            if attempt == 2:
+                logger.warning(f"Slack notification failed after 3 attempts: {e}")
+            else:
+                import time; time.sleep(2 ** attempt)
 
 
 # ---------------------------------------------------------------------------
