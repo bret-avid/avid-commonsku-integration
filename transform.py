@@ -197,9 +197,11 @@ def _locations(decoration_locations):
             continue
         # Normalise to Monday's exact label if a mapping exists
         normalised = LOCATION_NORMALISE.get(loc_upper, loc_upper)
-        # Only include if it's a known valid dropdown option (case-insensitive check)
-        if normalised.upper() in {v.upper() for v in VALID_LOCATIONS}:
-            locs.append(normalised)
+        # Only include if it's a known valid dropdown option, emitting Monday's
+        # exact label spelling (case matters — e.g. "Right Cuff", not "RIGHT CUFF")
+        canonical = {v.upper(): v for v in VALID_LOCATIONS}.get(normalised.upper())
+        if canonical:
+            locs.append(canonical)
     return ", ".join(locs) if locs else None
 
 
