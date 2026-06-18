@@ -3,6 +3,11 @@
 .env.*
 !.env.template
 
+# OAuth secrets and tokens — never commit
+client_secret_*.json
+token.json
+token.json.*
+
 # Python
 __pycache__/
 *.py[cod]

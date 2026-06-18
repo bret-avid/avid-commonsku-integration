@@ -1,20 +1,28 @@
 """
 email_watcher.py
-Watches a dedicated Gmail inbox for CommonSku SO confirmation emails,
-downloads PDF attachments, and processes them through the Monday integration.
+Watches a Gmail mailbox for CommonSku SO confirmation emails delivered via a
+Google Group, downloads PDF attachments, and processes them through the Monday
+integration.
 
 Runs continuously, polling every 60 seconds.
 
-First run: opens a browser for OAuth authentication and saves a token.
-Subsequent runs: uses the saved token silently.
+Inbound flow:
+    Sales order email --> so@avidapparel.ca group --> bret@ mailbox
+    A Gmail filter on bret@ applies label `so-inbox`, skips Inbox, marks read.
+    Old dedicated mailbox is set to forward to so@ for the transition period.
+
+Watcher behaviour:
+    Polls for messages with label `so-inbox` (pending).
+    After processing, removes `so-inbox` and adds `so-processed`.
+    Labels are auto-created on first run if missing.
 
 Usage:
     python3 email_watcher.py           # run continuously
-    python3 email_watcher.py --once    # process current unread emails once and exit
+    python3 email_watcher.py --once    # process current pending emails once and exit
 
 Setup:
     1. Place your client_secret_*.json file in the same directory as this script
-    2. Run once interactively to complete OAuth flow (opens browser)
+    2. Run once interactively to complete OAuth flow (opens browser) as bret@
     3. After authentication, token.json is saved — subsequent runs are silent
     4. Run with systemd or screen for continuous operation (see README)
 """
@@ -46,6 +54,10 @@ SCOPES            = ["https://www.googleapis.com/auth/gmail.modify"]
 CREDENTIALS_FILE  = next(Path(__file__).parent.glob("client_secret_*.json"), None)
 TOKEN_FILE        = Path(__file__).parent / "token.json"
 POLL_INTERVAL     = int(os.environ.get("EMAIL_POLL_INTERVAL", 60))  # seconds
+LABEL_PENDING     = os.environ.get("EMAIL_LABEL_PENDING", "so-inbox")
+LABEL_PROCESSED   = os.environ.get("EMAIL_LABEL_PROCESSED", "so-processed")
+
+_label_id_cache = {}
 
 
 # ---------------------------------------------------------------------------
@@ -74,15 +86,10 @@ def get_gmail_service():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
-            # run_console: prints a URL to open on any browser, then asks for the auth code
-            # Works on headless servers with no browser
-            # For headless servers: print auth URL, user pastes code back
-            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-            auth_url, _ = flow.authorization_url(prompt="consent")
-            print(f"\nPlease open this URL in your browser:\n\n{auth_url}\n")
-            code = input("Enter the authorization code from the browser: ").strip()
-            flow.fetch_token(code=code)
-            creds = flow.credentials
+            # Loopback flow: opens a browser and listens on a local port for the redirect.
+            # Requires a browser on this machine — for headless servers, run this script
+            # once on a workstation, then copy the resulting token.json over.
+            creds = flow.run_local_server(port=0, prompt="consent")
 
         with open(TOKEN_FILE, "w") as f:
             f.write(creds.to_json())
@@ -94,12 +101,37 @@ def get_gmail_service():
 # Email processing
 # ---------------------------------------------------------------------------
 
-def get_unread_messages(service):
-    """Fetch all unread messages in the inbox."""
+def get_label_id(service, name):
+    """Return Gmail label id for `name`, creating the label if absent."""
+    if name in _label_id_cache:
+        return _label_id_cache[name]
+
+    labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    for lbl in labels:
+        if lbl["name"].lower() == name.lower():
+            _label_id_cache[name] = lbl["id"]
+            return lbl["id"]
+
+    created = service.users().labels().create(
+        userId="me",
+        body={
+            "name": name,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        },
+    ).execute()
+    logger.info(f"Created Gmail label: {name}")
+    _label_id_cache[name] = created["id"]
+    return created["id"]
+
+
+def get_pending_messages(service):
+    """Fetch messages tagged with the pending label (delivered via group, not yet processed)."""
+    pending_id = get_label_id(service, LABEL_PENDING)
     result = service.users().messages().list(
         userId="me",
-        labelIds=["INBOX", "UNREAD"],
-        maxResults=50
+        labelIds=[pending_id],
+        maxResults=50,
     ).execute()
     return result.get("messages", [])
 
@@ -157,12 +189,17 @@ def get_pdf_attachments(service, message):
     return pdfs
 
 
-def mark_as_read(service, message_id):
-    """Mark a message as read so it isn't processed again."""
+def mark_processed(service, message_id):
+    """Move a message from the pending label to the processed label so it isn't re-processed."""
+    pending_id   = get_label_id(service, LABEL_PENDING)
+    processed_id = get_label_id(service, LABEL_PROCESSED)
     service.users().messages().modify(
         userId="me",
         id=message_id,
-        body={"removeLabelIds": ["UNREAD"]}
+        body={
+            "removeLabelIds": [pending_id, "UNREAD"],
+            "addLabelIds":    [processed_id],
+        },
     ).execute()
 
 
@@ -193,7 +230,7 @@ def process_message(service, message_id):
     Process a single email message:
     - Download PDF attachments
     - Run each through the Monday integration pipeline
-    - Mark email as read when done (even if processing failed)
+    - Move from pending label to processed label when done (even if processing failed)
     """
     from monday_api import process_pdf
 
@@ -211,10 +248,10 @@ def process_message(service, message_id):
             f":warning: *Email received but no PDF found*\n"
             f"From: {sender}\n"
             f"Subject: {subject}\n"
-            f"Email has been marked as read.",
+            f"Email has been marked as processed.",
             level="warning"
         )
-        mark_as_read(service, message_id)
+        mark_processed(service, message_id)
         return
 
     any_failed = False
@@ -247,9 +284,9 @@ def process_message(service, message_id):
             except Exception:
                 pass
 
-    # Mark as read regardless of success/failure
+    # Move to processed regardless of success/failure
     # Prevents infinite retry loops on persistently broken PDFs
-    mark_as_read(service, message_id)
+    mark_processed(service, message_id)
 
     if any_failed:
         logger.warning(f"Email processed with errors: {subject}")
@@ -258,14 +295,14 @@ def process_message(service, message_id):
 
 
 def run_once(service):
-    """Check inbox once and process all unread messages."""
-    messages = get_unread_messages(service)
+    """Check pending label once and process all messages found."""
+    messages = get_pending_messages(service)
 
     if not messages:
-        logger.debug("No unread messages.")
+        logger.debug("No pending messages.")
         return 0
 
-    logger.info(f"Found {len(messages)} unread message(s)")
+    logger.info(f"Found {len(messages)} pending message(s)")
     processed = 0
 
     for msg in messages:
@@ -274,13 +311,13 @@ def run_once(service):
             processed += 1
         except Exception as e:
             logger.error(f"Unexpected error processing message {msg['id']}: {e}")
-            # Don't mark as read — will retry next poll
+            # Don't move to processed — will retry next poll
             # But do notify so the team knows
             notify_slack(
                 f":red_circle: *Unexpected error in email watcher*\n"
                 f"Message ID: {msg['id']}\n"
                 f"Error: `{str(e)[:300]}`\n"
-                f"Email left unread for retry.",
+                f"Email left in pending label for retry.",
                 level="error"
             )
 
