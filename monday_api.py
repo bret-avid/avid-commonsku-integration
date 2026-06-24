@@ -14,6 +14,7 @@ Usage:
 
 import os
 import sys
+import time
 import json
 import requests
 from pathlib import Path
@@ -86,18 +87,46 @@ def _headers():
     }
 
 
-def _run_query(query, variables=None):
+def _is_transient(errors):
+    """True if Monday errors are server-side/transient (worth retrying)."""
+    for e in errors:
+        code = (e.get("extensions") or {}).get("code", "")
+        if code in ("INTERNAL_SERVER_ERROR", "ComplexityException", "RATE_LIMIT_EXCEEDED"):
+            return True
+        if "internal server error" in str(e.get("message", "")).lower():
+            return True
+    return False
+
+
+def _run_query(query, variables=None, _retries=3):
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
-    resp = requests.post(MONDAY_API_URL, headers=_headers(), json=payload, timeout=30)
-    if not resp.ok:
-        raise RuntimeError(f"Monday API {resp.status_code}: {resp.text[:500]}")
-    resp.raise_for_status()
-    data = resp.json()
-    if "errors" in data:
-        raise RuntimeError(f"Monday API error: {data['errors']}")
-    return data["data"]
+
+    last_err = None
+    for attempt in range(_retries):
+        resp = requests.post(MONDAY_API_URL, headers=_headers(), json=payload, timeout=30)
+
+        # Retry on 5xx / 429 — transient server-side failures
+        if resp.status_code >= 500 or resp.status_code == 429:
+            last_err = RuntimeError(f"Monday API {resp.status_code}: {resp.text[:500]}")
+            if attempt < _retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise last_err
+        if not resp.ok:
+            raise RuntimeError(f"Monday API {resp.status_code}: {resp.text[:500]}")
+
+        data = resp.json()
+        if "errors" in data:
+            if _is_transient(data["errors"]) and attempt < _retries - 1:
+                last_err = RuntimeError(f"Monday API error: {data['errors']}")
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"Monday API error: {data['errors']}")
+        return data["data"]
+
+    raise last_err  # exhausted retries
 
 
 def fetch_board_columns():
