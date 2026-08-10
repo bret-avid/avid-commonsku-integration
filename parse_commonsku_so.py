@@ -193,7 +193,9 @@ def _extract_product_name(candidate_lines):
 def parse_products(text):
     products = []
 
-    for item_match in re.finditer(r"ITEM QTY PRICE AMOUNT", text):
+    # CommonSku added an "EXTERNAL SKU" column to the line-item header (~Aug 2026).
+    # Match the header with or without it so both old and new PDFs parse.
+    for item_match in re.finditer(r"ITEM(?: EXTERNAL SKU)? QTY PRICE AMOUNT", text):
         block_start = item_match.start()
 
         before = text[max(0, block_start - 700):block_start]
@@ -212,7 +214,7 @@ def parse_products(text):
         }
 
         # Bound block end
-        next_item = re.search(r"ITEM QTY PRICE AMOUNT", text[block_start + 1:])
+        next_item = re.search(r"ITEM(?: EXTERNAL SKU)? QTY PRICE AMOUNT", text[block_start + 1:])
         services_pos = text.find("SERVICE QTY PRICE AMOUNT", block_start)
         tc_pos = text.find("TERMS AND CONDITIONS", block_start)
 

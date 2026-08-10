@@ -422,6 +422,17 @@ def process_pdf(pdf_path, dry_run=False):
 
     logger.info(f"SO {so_number} - {client} - {len(products)} product line(s)")
 
+    # Guard: a parsed-but-empty order means the PDF layout changed (e.g. a new
+    # CommonSku column broke the line-item anchor). Don't fail silently — the item
+    # would otherwise be marked processed with nothing created and no alert.
+    if not products and not dry_run:
+        notify_slack(
+            f":warning: *SO {so_number} ({client}) parsed 0 line items* — nothing was added to Monday.\n"
+            f"Likely a CommonSku PDF format change; this order needs manual review.\n"
+            f"File: {Path(pdf_path).name}",
+            level="warning",
+        )
+
     # Find any existing Monday items for this SO number
     # Search runs in both live and dry-run mode so output accurately shows create vs update
     existing_items = []
