@@ -12,6 +12,11 @@ import sys, re, json, csv, io
 import pdfplumber
 
 
+def _num(s):
+    """Strip thousands separators from a captured number string."""
+    return s.replace(",", "")
+
+
 def _is_description_line(line):
     """True if line is garment spec copy rather than a product name."""
     # Product title lines (/// or //) are never descriptions
@@ -232,15 +237,16 @@ def parse_products(text):
         product["color"] = color_m.group(1).strip() if color_m else None
 
         size_rows = re.findall(
-            r"Size: (\S+) - Color: \S.*?\s+(\d+)\s+\$([\d.]+)\s+\$([\d.]+)", block
+            r"Size: (\S+) - Color: \S.*?\s+([\d,]+)\s+\$([\d,.]+)\s+\$([\d,.]+)", block
         )
         product["sizes"] = [
-            {"size": r[0], "qty": int(r[1]), "unit_price": float(r[2]), "amount": float(r[3])}
+            {"size": r[0], "qty": int(_num(r[1])),
+             "unit_price": float(_num(r[2])), "amount": float(_num(r[3]))}
             for r in size_rows
         ]
 
-        m = re.search(r"TOTAL UNITS\s+(\d+)", block)
-        product["total_units"] = int(m.group(1)) if m else None
+        m = re.search(r"TOTAL UNITS\s+([\d,]+)", block)
+        product["total_units"] = int(_num(m.group(1))) if m else None
 
         m = re.search(r"\nTOTAL\s+\$([\d,]+\.\d{2})", block)
         product["total"] = m.group(1) if m else None
@@ -272,7 +278,7 @@ def parse_services(text):
 
     pending_name = None
     for line in m.group(1).strip().split("\n"):
-        qp = re.search(r"(\d+)\s+\$([\d.]+)\s+\$([\d.]+)", line)
+        qp = re.search(r"([\d,]+)\s+\$([\d,.]+)\s+\$([\d,.]+)", line)
         if qp:
             inline_name = line[:qp.start()].strip()
             if pending_name and (not inline_name or len(inline_name) > 40):
@@ -285,9 +291,9 @@ def parse_services(text):
                 name = "Unknown Service"
             services.append({
                 "service": name,
-                "qty": int(qp.group(1)),
-                "unit_price": float(qp.group(2)),
-                "amount": float(qp.group(3))
+                "qty": int(_num(qp.group(1))),
+                "unit_price": float(_num(qp.group(2))),
+                "amount": float(_num(qp.group(3)))
             })
             pending_name = None
         else:
