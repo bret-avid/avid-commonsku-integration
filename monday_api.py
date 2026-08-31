@@ -105,7 +105,18 @@ def _run_query(query, variables=None, _retries=3):
 
     last_err = None
     for attempt in range(_retries):
-        resp = requests.post(MONDAY_API_URL, headers=_headers(), json=payload, timeout=30)
+        try:
+            resp = requests.post(MONDAY_API_URL, headers=_headers(), json=payload, timeout=30)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            # The connection died before we got a response — dropped TLS
+            # ("EOF occurred in violation of protocol"), reset socket, DNS blip,
+            # or a read timeout. requests.exceptions.SSLError is a subclass of
+            # ConnectionError, so it is covered here. Transient: retry.
+            last_err = RuntimeError(f"Monday API connection error: {type(e).__name__}: {e}")
+            if attempt < _retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise last_err
 
         # Retry on 5xx / 429 — transient server-side failures
         if resp.status_code >= 500 or resp.status_code == 429:

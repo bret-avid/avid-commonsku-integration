@@ -32,6 +32,9 @@ import sys
 import base64
 import time
 import re
+import ssl
+import socket
+import http.client
 import tempfile
 import logging
 from pathlib import Path
@@ -40,6 +43,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
 # Google API imports
+import httplib2
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -58,6 +62,23 @@ LABEL_PENDING     = os.environ.get("EMAIL_LABEL_PENDING", "so-inbox")
 LABEL_PROCESSED   = os.environ.get("EMAIL_LABEL_PROCESSED", "so-processed")
 
 _label_id_cache = {}
+
+# Transport-level failures: the connection died, as opposed to the API rejecting
+# the request. googleapiclient sits on httplib2, which keeps one persistent TLS
+# connection per host and does NOT detect a stale socket. Between 60s polls the
+# connection goes idle, Google's frontend (and the droplet's NAT conntrack) drops
+# it, and the next request writes into a dead socket -> SSLEOFError
+# "EOF occurred in violation of protocol". The cure is to rebuild the service.
+TRANSPORT_ERRORS = (
+    ssl.SSLError,              # includes ssl.SSLEOFError
+    socket.timeout,
+    socket.error,              # OSError: ConnectionReset/Aborted/BrokenPipe
+    http.client.HTTPException,
+    httplib2.HttpLib2Error,
+)
+
+# googleapiclient will retry transport failures itself, but only if asked.
+API_RETRIES = 3
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +115,7 @@ def get_gmail_service():
         with open(TOKEN_FILE, "w") as f:
             f.write(creds.to_json())
 
-    return build("gmail", "v1", credentials=creds)
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +127,7 @@ def get_label_id(service, name):
     if name in _label_id_cache:
         return _label_id_cache[name]
 
-    labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    labels = service.users().labels().list(userId="me").execute(num_retries=API_RETRIES).get("labels", [])
     for lbl in labels:
         if lbl["name"].lower() == name.lower():
             _label_id_cache[name] = lbl["id"]
@@ -119,7 +140,7 @@ def get_label_id(service, name):
             "labelListVisibility": "labelShow",
             "messageListVisibility": "show",
         },
-    ).execute()
+    ).execute(num_retries=API_RETRIES)
     logger.info(f"Created Gmail label: {name}")
     _label_id_cache[name] = created["id"]
     return created["id"]
@@ -132,7 +153,7 @@ def get_pending_messages(service):
         userId="me",
         labelIds=[pending_id],
         maxResults=50,
-    ).execute()
+    ).execute(num_retries=API_RETRIES)
     return result.get("messages", [])
 
 
@@ -142,7 +163,7 @@ def get_message_detail(service, message_id):
         userId="me",
         id=message_id,
         format="full"
-    ).execute()
+    ).execute(num_retries=API_RETRIES)
 
 
 def get_pdf_attachments(service, message):
@@ -175,7 +196,7 @@ def get_pdf_attachments(service, message):
                     userId="me",
                     messageId=message["id"],
                     id=attachment_id
-                ).execute()
+                ).execute(num_retries=API_RETRIES)
                 data = base64.urlsafe_b64decode(attachment["data"])
             elif body.get("data"):
                 # Small attachment — inline
@@ -200,7 +221,7 @@ def mark_processed(service, message_id):
             "removeLabelIds": [pending_id, "UNREAD"],
             "addLabelIds":    [processed_id],
         },
-    ).execute()
+    ).execute(num_retries=API_RETRIES)
 
 
 def get_sender(message):
@@ -309,6 +330,11 @@ def run_once(service):
         try:
             process_message(service, msg["id"])
             processed += 1
+        except TRANSPORT_ERRORS:
+            # Connection died mid-message. Bubble up so run_continuously can
+            # rebuild the Gmail service; the message keeps its pending label
+            # and gets retried on the next poll.
+            raise
         except Exception as e:
             logger.error(f"Unexpected error processing message {msg['id']}: {e}")
             # Don't move to processed — will retry next poll
@@ -333,12 +359,37 @@ def run_continuously(service):
         level="success"
     )
 
+    consecutive_transport_errors = 0
+
     while True:
         try:
             run_once(service)
+            consecutive_transport_errors = 0
         except HttpError as e:
             logger.error(f"Gmail API error: {e}")
             notify_slack(f":red_circle: *Gmail API error in watcher*\n`{str(e)[:300]}`", level="error")
+        except TRANSPORT_ERRORS as e:
+            consecutive_transport_errors += 1
+            logger.warning(
+                f"Gmail connection dropped ({type(e).__name__}: {e}). "
+                f"Rebuilding service (consecutive failures: {consecutive_transport_errors})."
+            )
+            _label_id_cache.clear()
+            try:
+                service = get_gmail_service()
+                logger.info("Gmail service rebuilt.")
+            except Exception as rebuild_err:
+                logger.error(f"Failed to rebuild Gmail service: {rebuild_err}")
+
+            # A single dropped keep-alive is routine and self-healing — only page
+            # the team once it looks like a real outage.
+            if consecutive_transport_errors == 3:
+                notify_slack(
+                    f":red_circle: *Email watcher losing its Gmail connection*\n"
+                    f"3 consecutive transport failures. Latest: `{type(e).__name__}: {str(e)[:200]}`\n"
+                    f"Still retrying every {POLL_INTERVAL}s.",
+                    level="error",
+                )
         except Exception as e:
             logger.error(f"Watcher loop error: {e}")
             notify_slack(f":red_circle: *Unexpected watcher error*\n`{str(e)[:300]}`", level="error")
