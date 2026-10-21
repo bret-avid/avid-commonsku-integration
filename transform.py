@@ -183,11 +183,42 @@ LOCATION_NORMALISE = {
 }
 
 
-def _locations(decoration_locations):
+_HAT_TEXT_RE = re.compile(
+    r"\b(hat|cap|trucker|snapback|beanie|toque|visor|brim)\b", re.IGNORECASE
+)
+# CommonSku names hat embroidery positions "Front Embroidery", "Left Embroidery", ...
+# (optionally "Left Side Embroidery" / "Back Center Embroidery"). Only meaningful on hats.
+_HAT_EMBROIDERY_LOC_RE = re.compile(
+    r"^(FRONT|LEFT|RIGHT|BACK)(?:\s+(?:SIDE|CENTER|CENTRE))?\s*-?\s*EMBROIDERY$"
+)
+_HAT_EMBROIDERY_LOC_MAP = {
+    "FRONT": "HAT - FRONT",
+    "LEFT":  "HAT - LEFT SIDE",
+    "RIGHT": "HAT - RIGHT SIDE",
+    "BACK":  "HAT - BACK CENTER",
+}
+
+
+def _hat_location(loc, product_text):
+    """
+    Map a hat embroidery position ("Front Embroidery", "Left Embroidery", ...) to the
+    Monday HAT - * dropdown value. Returns None for non-hat products or other locations,
+    so e.g. "Front Embroidery" on a tee is left exactly as before.
+    """
+    if not product_text or not _HAT_TEXT_RE.search(product_text):
+        return None
+    m = _HAT_EMBROIDERY_LOC_RE.match(loc.upper().strip())
+    return _HAT_EMBROIDERY_LOC_MAP[m.group(1)] if m else None
+
+
+def _locations(decoration_locations, product_text=None):
     """
     Build the LOCATIONS string from decoration locations.
     Normalises spelling variants and maps hat-specific descriptor locations
     to Monday dropdown values. Excludes label/finishing locations.
+
+    product_text (the line item's title/name) lets hat embroidery positions such as
+    "Front Embroidery" map to HAT - FRONT; it is only used to recognise hats.
     """
     locs = []
     for loc in decoration_locations:
@@ -196,11 +227,11 @@ def _locations(decoration_locations):
         if any(excl in loc.lower() for excl in LOCATIONS_SEPARATE):
             continue
         # Normalise to Monday's exact label if a mapping exists
-        normalised = LOCATION_NORMALISE.get(loc_upper, loc_upper)
+        normalised = _hat_location(loc, product_text) or LOCATION_NORMALISE.get(loc_upper, loc_upper)
         # Only include if it's a known valid dropdown option, emitting Monday's
         # exact label spelling (case matters — e.g. "Right Cuff", not "RIGHT CUFF")
         canonical = {v.upper(): v for v in VALID_LOCATIONS}.get(normalised.upper())
-        if canonical:
+        if canonical and canonical not in locs:
             locs.append(canonical)
     return ", ".join(locs) if locs else None
 
@@ -734,7 +765,10 @@ def to_monday(order, product, full_text=""):
         "TTL SO QUANTITY":        product.get("total_units"),
 
         # Decoration
-        "LOCATIONS":              _locations(product.get("decoration_locations", [])),
+        "LOCATIONS":              _locations(
+                                      product.get("decoration_locations", []),
+                                      f'{product.get("title") or ""} {product.get("product_name") or ""}',
+                                  ),
         "DECORATION TYPE":        _decoration_type(
                                       product.get("imprint_types", []), full_text
                                   ),
