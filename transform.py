@@ -211,6 +211,32 @@ def _hat_location(loc, product_text):
     return _HAT_EMBROIDERY_LOC_MAP[m.group(1)] if m else None
 
 
+_LOC_METHOD_SUFFIX_RE = re.compile(r"\s+(EMBROIDERY|PRINT|PRINTING|SCREENPRINT|SCREEN PRINT)$")
+
+
+def _normalise_location(loc, product_text=None):
+    """
+    Return the normalised location string for a PDF DESIGN LOCATION value.
+    Order: hat embroidery positions -> explicit LOCATION_NORMALISE mapping ->
+    the same lookup after dropping a trailing decoration-method word, so
+    "Left Chest Embroidery" resolves to LEFT CHEST just as "Left Chest Print" does.
+    """
+    loc_upper = loc.upper().strip()
+    hat = _hat_location(loc, product_text)
+    if hat:
+        return hat
+    valid_upper = {v.upper() for v in VALID_LOCATIONS}
+    normalised = LOCATION_NORMALISE.get(loc_upper, loc_upper)
+    if normalised.upper() in valid_upper:
+        return normalised
+    stripped = _LOC_METHOD_SUFFIX_RE.sub("", loc_upper).strip()
+    if stripped != loc_upper:
+        alt = LOCATION_NORMALISE.get(stripped, stripped)
+        if alt.upper() in valid_upper:
+            return alt
+    return normalised
+
+
 def _locations(decoration_locations, product_text=None):
     """
     Build the LOCATIONS string from decoration locations.
@@ -222,12 +248,11 @@ def _locations(decoration_locations, product_text=None):
     """
     locs = []
     for loc in decoration_locations:
-        loc_upper = loc.upper().strip()
         # Skip anything handled by a dedicated field
         if any(excl in loc.lower() for excl in LOCATIONS_SEPARATE):
             continue
         # Normalise to Monday's exact label if a mapping exists
-        normalised = _hat_location(loc, product_text) or LOCATION_NORMALISE.get(loc_upper, loc_upper)
+        normalised = _normalise_location(loc, product_text)
         # Only include if it's a known valid dropdown option, emitting Monday's
         # exact label spelling (case matters — e.g. "Right Cuff", not "RIGHT CUFF")
         canonical = {v.upper(): v for v in VALID_LOCATIONS}.get(normalised.upper())
@@ -625,12 +650,11 @@ def _decoration_locations_key(decoration_locations):
     """
     locs = set()
     for loc in decoration_locations:
-        loc_upper = loc.upper().strip()
         if any(excl in loc.lower() for excl in LOCATIONS_SEPARATE):
             continue
         if "mockup" in loc.lower():
             continue
-        normalised = LOCATION_NORMALISE.get(loc_upper, loc_upper)
+        normalised = _normalise_location(loc)
         if normalised.upper() in {v.upper() for v in VALID_LOCATIONS}:
             locs.add(normalised.upper())
     return frozenset(locs)

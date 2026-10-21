@@ -102,6 +102,10 @@ def parse_order_header(text):
                   text, re.IGNORECASE)
     raw_terms = m.group(1).strip() if m else None
     order["terms"] = re.sub(r"\s+(USD|CAD)\s*$", "", raw_terms).strip() if raw_terms else None
+    # Long terms wrap over several lines ("50% Deposit /\nBalance Due Before\nShipment"), so
+    # only the first fragment is captured and it ends in a dangling "/" — drop it.
+    if order["terms"]:
+        order["terms"] = re.sub(r"[\s/\-]+$", "", order["terms"]).strip() or None
 
     # Customer PO: everything between terms token and USD/CAD on that line, if it contains digits
     m = re.search(r"(?:Net \d+|50%[^$\n\d]+|Due[^$\n\d]+)\s+(.+?)\s+(?:USD|CAD)\s*$",

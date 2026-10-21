@@ -13,6 +13,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import time
 import json
@@ -75,6 +76,22 @@ TERMS_MAP = {
     "50% DEPOSIT / BALANCE": "50% DEPOSIT 50% ON SHIPMENT",
     "50% DEPOSIT":           "50% DEPOSIT 50% ON SHIPMENT",
 }
+
+
+def _terms_label(value):
+    """
+    Map a parsed terms string to Monday's exact TERMS status label.
+    Tolerates wrapped/truncated PDF text such as "50% Deposit /" by trimming dangling
+    joiners and falling back to a prefix match for the deposit terms.
+    """
+    raw = str(value)
+    key = re.sub(r"\s+", " ", raw.strip().upper())
+    key = re.sub(r"[\s/\-]+$", "", key)
+    if key in TERMS_MAP:
+        return TERMS_MAP[key]
+    if key.startswith("50% DEPOSIT"):
+        return TERMS_MAP["50% DEPOSIT"]
+    return raw
 
 
 def _headers():
@@ -222,7 +239,7 @@ def _build_column_values(monday_dict):
             column_values[column_id] = {"labels": _split_top_level(str(value))}
 
         elif field_name == "TERMS $":
-            label = TERMS_MAP.get(str(value).upper(), str(value))
+            label = _terms_label(value)
             column_values[column_id] = {"label": label}
 
         elif field_name in (
