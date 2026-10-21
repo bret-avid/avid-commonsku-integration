@@ -195,6 +195,33 @@ def _extract_product_name(candidate_lines):
     return None, candidate_lines[-1]
 
 
+def _product_title(candidate_lines):
+    """
+    Return this line item's own title text (the line holding the style code, plus a
+    wrapped continuation when it clearly is one), for per-line TC#### / artwork parsing.
+
+    Unlike product_name this never swallows the garment description that sits between
+    the title and the ITEM header: a continuation is only joined when it is short and
+    sentence-free (no commas/periods), e.g. a lone "Trucker" from a wrapped title.
+    """
+    for i, line in enumerate(reversed(candidate_lines)):
+        style_m = next(
+            (m for m in re.finditer(r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2})\b", line)
+             if re.search(r"[A-Z]", m.group(1))),
+            None,
+        )
+        if style_m:
+            title = line.strip()
+            idx = len(candidate_lines) - 1 - i
+            if idx + 1 < len(candidate_lines):
+                nxt = candidate_lines[idx + 1]
+                if (not _is_description_line(nxt) and not _SKIP_HEADER.match(nxt)
+                        and len(nxt) <= 40 and "," not in nxt and "." not in nxt):
+                    title = title + " " + nxt
+            return title
+    return None
+
+
 def parse_products(text):
     products = []
 
@@ -216,6 +243,7 @@ def parse_products(text):
         product = {
             "style_code": style_code,
             "product_name": product_name,
+            "title": _product_title(candidate_lines),
         }
 
         # Bound block end

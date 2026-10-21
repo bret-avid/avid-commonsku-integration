@@ -421,12 +421,55 @@ def _best_product_title(full_text):
     return max((l.strip() for l in triple_lines), key=len, default='')
 
 
-def _get_tc_number(full_text):
+_TC_RUN_RE = r'\bTC\d{3,}\b(?:\s*&\s*TC\d{3,}\b)*'
+
+
+def _title_tc_and_artwork(title):
     """
-    Extract the TC style number (e.g. TC2320) from the best product title line,
-    falling back to DESIGN NAME lines if not found in the title.
+    Parse one product title string of the form
+        ... - COLOUR - TC#### - ARTWORK NAME [- decoration]
+    and return (tc_number, artwork_name); either can be None.
+
+    Handles order-level titles that list several designs ("TC4103 & TC4102 - ARTWORK"):
+    the whole "TC#### & TC####" run is skipped so the artwork name is not mistaken for
+    "& TC4102". In that case the first TC in the run is returned.
     """
     import re as _re
+    if not title:
+        return None, None
+
+    run = _re.search(_TC_RUN_RE, title)
+    if not run:
+        return None, None
+
+    tc_number = _re.search(r'TC\d{3,}', run.group(0)).group(0)
+
+    after_tc = title[run.end():]
+    after_tc = _re.sub(r'^\s*[-\s]+', '', after_tc)
+
+    decoration_kw = (r'Left Chest|Right Chest|Front Chest|Back Print|Full Back|'
+                     r'Front Center|Left Sleeve|Right Sleeve|Hat|Replen|Replenishment')
+    loc_match = _re.search(r'\s*-\s*(?:' + decoration_kw + r')', after_tc, _re.IGNORECASE)
+    if loc_match:
+        artwork = after_tc[:loc_match.start()].strip()
+    else:
+        dash_match = _re.search(r'\s*-\s*', after_tc)
+        artwork = after_tc[:dash_match.start()].strip() if dash_match else after_tc.strip()
+    return tc_number, (artwork or None)
+
+
+def _get_tc_number(full_text, line_title=None):
+    """
+    Extract the TC style number (e.g. TC2320).
+
+    Prefers the line item's own title (line_title) so multi-garment orders get the
+    right TC per line. Falls back to the best title line in the whole PDF text, then to
+    the first TC#### anywhere in the text.
+    """
+    import re as _re
+    tc, _ = _title_tc_and_artwork(line_title)
+    if tc:
+        return tc
     title = _best_product_title(full_text)
     tc = _re.search(r'\bTC(\d{3,})\b', title)
     if tc:
@@ -439,31 +482,20 @@ def _get_tc_number(full_text):
     return None
 
 
-def _get_artwork_name(full_text):
+def _get_artwork_name(full_text, line_title=None):
     """
-    Extract the artwork/product name from the best product title line.
+    Extract the artwork/product name.
     Title structure: CLIENT_PO///STYLE DESC - COLOUR - TC#### - ARTWORK NAME - decoration
-    Artwork name is the segment immediately after TC#### and before the decoration suffix.
+
+    Prefers the line item's own title (line_title) so each garment line on a
+    multi-garment order gets its own artwork name. Falls back to the best title line in
+    the whole PDF text (used when a wrapped title leaves the line item without a TC).
     """
-    import re as _re
-    title = _best_product_title(full_text)
-    if not title:
-        return None
-
-    tc_match = _re.search(r'\bTC\d{3,}\b', title)
-    if not tc_match:
-        return None
-
-    after_tc = title[tc_match.end():]
-    after_tc = _re.sub(r'^\s*[-\s]+', '', after_tc)
-
-    decoration_kw = (r'Left Chest|Right Chest|Front Chest|Back Print|Full Back|'
-                     r'Front Center|Left Sleeve|Right Sleeve|Hat|Replen|Replenishment')
-    loc_match = _re.search(r'\s*-\s*(?:' + decoration_kw + r')', after_tc, _re.IGNORECASE)
-    if loc_match:
-        return after_tc[:loc_match.start()].strip() or None
-    dash_match = _re.search(r'\s*-\s*', after_tc)
-    return after_tc[:dash_match.start()].strip() if dash_match else after_tc.strip() or None
+    _, artwork = _title_tc_and_artwork(line_title)
+    if artwork:
+        return artwork
+    _, artwork = _title_tc_and_artwork(_best_product_title(full_text))
+    return artwork
 
 
 def _primary_design_name(full_text, color=None):
@@ -612,6 +644,9 @@ def _merge_products(group):
                 seen_types.add(t)
     base["imprint_types"] = all_types
 
+    # Keep the longest per-line title (used for TC#### / artwork parsing)
+    base["title"] = max((p.get("title") or "" for p in group), key=len) or None
+
     # Keep the longest/most descriptive product name
     base["product_name"] = max(
         (p.get("product_name") or "" for p in group), key=len
@@ -716,8 +751,8 @@ def to_monday(order, product, full_text=""):
         "Troll Co Order?":        "YES" if _is_troll_co(order.get("client", "")) else "NO",
 
         # Troll Co specific fields — only populated for Troll Co orders
-        "Troll Co Style #":       _get_tc_number(full_text) if _is_troll_co(order.get("client", "")) else None,
-        "ARTWORK":                _get_artwork_name(full_text) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text, product.get("color")),
+        "Troll Co Style #":       _get_tc_number(full_text, product.get("title")) if _is_troll_co(order.get("client", "")) else None,
+        "ARTWORK":                _get_artwork_name(full_text, product.get("title")) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text, product.get("color")),
 
         # Repeat order detection
         "REPEAT ORDER?":          "REPEAT ORDER" if _is_repeat_order(full_text) else "NEW ORDER",
