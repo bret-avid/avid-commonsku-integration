@@ -161,6 +161,12 @@ def parse_order_header(text):
     return order
 
 
+# Style code: optional letters + 2-5 digits + optional letters, plus an optional
+# hyphenated suffix with no spaces (e.g. "C52-WM", "AVN6210"). The suffix is part of
+# the style, so it must not be cut off at the hyphen.
+_STYLE_CODE_RE = r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2}(?:-[A-Z0-9]{1,4})?)\b"
+
+
 def _extract_product_name(candidate_lines):
     """
     Given the candidate lines before an ITEM block, extract style_code and product_name.
@@ -176,7 +182,7 @@ def _extract_product_name(candidate_lines):
     # Use finditer so date digits (e.g. "26" in "26.05.26//AV4502") don't shadow the real code.
     for i, line in enumerate(reversed(candidate_lines)):
         style_m = next(
-            (m for m in re.finditer(r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2})\b", line)
+            (m for m in re.finditer(_STYLE_CODE_RE, line)
              if re.search(r"[A-Z]", m.group(1))),
             None,
         )
@@ -206,7 +212,7 @@ def _product_title(candidate_lines):
     """
     for i, line in enumerate(reversed(candidate_lines)):
         style_m = next(
-            (m for m in re.finditer(r"\b([A-Z]{0,4}\d{2,5}[A-Z]{0,2})\b", line)
+            (m for m in re.finditer(_STYLE_CODE_RE, line)
              if re.search(r"[A-Z]", m.group(1))),
             None,
         )
