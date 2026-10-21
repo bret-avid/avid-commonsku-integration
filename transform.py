@@ -609,8 +609,21 @@ def _primary_design_name(full_text, color=None):
             loc = loc_m.group(1).strip().lower()
             if any(excl in loc for excl in skip_locs):
                 continue
-        return name
+        return _strip_design_location(name)
     return None
+
+
+_DESIGN_LOC_SUFFIX_RE = re.compile(
+    r"\s+-\s+(?=[^-]*\b(?:chest|back|front|sleeve|cuff|thigh|calf|hip|leg|pocket|wrist|"
+    r"neck|side|center|centre|hat|print|printing|embroidery|screenprint|patch|label|tag)\b)[^-]+$",
+    re.IGNORECASE,
+)
+
+
+def _strip_design_location(name):
+    """'Whiskey Rd. Outdoors Tee - Left Chest Embroidery' -> 'Whiskey Rd. Outdoors Tee'."""
+    stripped = _DESIGN_LOC_SUFFIX_RE.sub("", name).strip()
+    return stripped or name
 
 
 def _is_repeat_order(full_text):
