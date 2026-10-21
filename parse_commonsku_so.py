@@ -120,7 +120,8 @@ def parse_order_header(text):
 
     # Fallback: if PO field was blank in header, extract from "PO# NNNNNN" in title line
     if not order["customer_po"]:
-        m = re.search(r"PO#\s+(\d{5,})", text)
+        # Ignore "Repeat of PO# NNNNN" / "Repeat PO# NNNNN" - that's a prior order, not this one's PO
+        m = re.search(r"(?<!Repeat of )(?<!Repeat )(?<!repeat of )(?<!repeat )PO#\s+(\d{5,})", text)
         if m:
             order["customer_po"] = m.group(1)
 
