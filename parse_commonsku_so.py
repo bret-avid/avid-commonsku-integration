@@ -222,6 +222,36 @@ def _product_title(candidate_lines):
     return None
 
 
+_COLOR_CONT_STOP = re.compile(
+    r"^(TOTAL|SUBTOTAL|Size:|Artwork|DESIGN|IMPRINT|ITEM|SERVICE|Product image|Click to)",
+    re.IGNORECASE,
+)
+
+
+def _full_color(block, color_m):
+    """
+    Return the colour for a line item, re-joining colours that the PDF wraps onto a
+    second line, e.g. "Size: OS - Color: Heather Gray / 40 $0.00 $0.00" followed by a
+    lone "Black" line must give "Heather Gray / Black", not "Heather Gray /".
+
+    A following line is only joined when the first part ends in a joiner ("/", "&", "-")
+    or the line is a short alphabetic fragment, and it isn't a table/section label.
+    """
+    if not color_m:
+        return None
+    color = color_m.group(1).strip()
+    rest = block[color_m.end():]
+    # skip the remainder of the size row (qty / price / amount) and take the next line
+    nl = rest.find("\n")
+    if nl == -1:
+        return color
+    nxt = rest[nl + 1:].split("\n", 1)[0].strip()
+    if (nxt and not _COLOR_CONT_STOP.match(nxt)
+            and re.fullmatch(r"[A-Za-z][A-Za-z /&\-]{0,30}", nxt)):
+        color = (color + " " + nxt).strip()
+    return color
+
+
 def parse_products(text):
     products = []
 
@@ -262,7 +292,7 @@ def parse_products(text):
         block = text[block_start:min(end_candidates)]
 
         color_m = re.search(r"Size: \S+ - Color: (.+?)\s+\d", block)
-        product["color"] = color_m.group(1).strip() if color_m else None
+        product["color"] = _full_color(block, color_m)
 
         size_rows = re.findall(
             r"Size: (\S+) - Color: \S.*?\s+([\d,]+)\s+\$([\d,.]+)\s+\$([\d,.]+)", block
