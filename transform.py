@@ -556,6 +556,12 @@ def _get_artwork_name(full_text, line_title=None):
     return artwork
 
 
+_TITLE_DESCRIPTOR_RE = re.compile(
+    r"\b(?:orders?|ordre|samples?|bulk|replen\w*|repeat|rush)\b|\sx\s",
+    re.IGNORECASE,
+)
+
+
 def _primary_design_name(full_text, color=None):
     """
     Extract artwork name for non-Troll Co orders.
@@ -585,7 +591,16 @@ def _primary_design_name(full_text, color=None):
                 while remaining and suffix_re.match(remaining[-1].strip()):
                     remaining.pop()
                 if remaining:
-                    return ' '.join(p.strip() for p in remaining)
+                    # Anything after the artwork name that reads like project / order-type
+                    # text ("Retrokid x Big Comfy Couch Order", "DTF SAMPLE ORDER") is not
+                    # part of the design name: keep the first segment, then stop at the
+                    # first descriptor-looking segment.
+                    kept = [remaining[0]]
+                    for seg in remaining[1:]:
+                        if _TITLE_DESCRIPTOR_RE.search(seg):
+                            break
+                        kept.append(seg)
+                    return ' '.join(p.strip() for p in kept)
                 # Format B: artwork is before the color  e.g. "DATE//CODE ArtworkName - Color"
                 if '//' in parts[0] and color_idx > 0:
                     after_slash = parts[0].split('//')[-1]
