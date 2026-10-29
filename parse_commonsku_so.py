@@ -233,6 +233,66 @@ def _product_title(candidate_lines):
     return None
 
 
+# A garment style token at the start of a product title: optional brand/category
+# letters (any case, e.g. "AVSWeRK250LS", "AVIND330BLV"), digits, optional letter
+# suffix and an optional hyphenated suffix ("C52-WM"). Must contain a letter.
+_TITLE_STYLE_TOKEN_RE = re.compile(r"^(?=[^\s]*[A-Za-z])[A-Za-z]{0,8}\d{2,5}[A-Za-z]{0,4}(?:-[A-Z0-9]{1,4})?$")
+
+_TITLE_SKIP_RE = re.compile(r"^(Size:|DESIGN |IMPRINT |ITEM|TOTAL|SUBTOTAL|Artwork|Click to)", re.IGNORECASE)
+
+
+def _find_title_line(text, start, end, color):
+    """
+    Find this line item's own product title: the nearest line before the ITEM header
+    that reads "<style> <product> - <Colour> - <artwork>".
+
+    Searching by colour (rather than a fixed character window) copes with long garment
+    descriptions that push the title far above the size table, and keeps style codes
+    from being picked out of spec copy such as "breathability rating: 1000G/M2".
+    Returns the title (with a short wrapped continuation joined) or None.
+    """
+    if not color:
+        return None
+    col = color.split("/")[0].strip()
+    if not col:
+        return None
+    pat = re.compile(r"\s-\s*" + re.escape(col) + r"(?:\s|$|-)", re.IGNORECASE)
+    lines = [l.strip() for l in text[start:end].split("\n")]
+    for idx in range(len(lines) - 1, -1, -1):
+        line = lines[idx]
+        if not line or _TITLE_SKIP_RE.match(line) or not pat.search(line):
+            continue
+        title = line
+        nxt = lines[idx + 1] if idx + 1 < len(lines) else ""
+        # Join a wrapped tail only when the order title at the top of the PDF confirms
+        # it continues the title (so spec copy like "100% COTTON" is never joined).
+        if (nxt and len(nxt) <= 40 and "," not in nxt and "." not in nxt
+                and not _SKIP_HEADER.match(nxt) and not _is_description_line(nxt)):
+            header = re.sub(r"\s+", "", text[:800]).lower()
+            probe = re.sub(r"\s+", "", title[-20:] + nxt.split(" ")[0]).lower()
+            if probe in header:
+                no_space = title.endswith("-") and not title.endswith(" -")
+                title = f"{title}{'' if no_space else ' '}{nxt}"
+        return title
+    return None
+
+
+def _style_from_title(title):
+    """
+    (style_code, product_name) from a product title line. Only the title is examined —
+    never the description. Tries the first token after any "PO//" / "date///" prefix,
+    then falls back to the legacy style-code pattern within the title.
+    """
+    body = title.split("//")[-1].lstrip("/").strip()
+    first = body.split(" ", 1)
+    if first and _TITLE_STYLE_TOKEN_RE.match(first[0]):
+        return first[0], (first[1] if len(first) > 1 else "").strip().lstrip("-").strip()
+    m = next((m for m in re.finditer(_STYLE_CODE_RE, body) if re.search(r"[A-Z]", m.group(1))), None)
+    if m:
+        return m.group(1), body[m.end():].strip().lstrip("-").strip()
+    return None, body
+
+
 _COLOR_CONT_STOP = re.compile(
     r"^(TOTAL|SUBTOTAL|Size:|Artwork|DESIGN|IMPRINT|ITEM|SERVICE|Product image|Click to)",
     re.IGNORECASE,
@@ -268,8 +328,10 @@ def parse_products(text):
 
     # CommonSku added an "EXTERNAL SKU" column to the line-item header (~Aug 2026).
     # Match the header with or without it so both old and new PDFs parse.
+    prev_item_end = 0
     for item_match in re.finditer(r"ITEM(?: EXTERNAL SKU)? QTY PRICE AMOUNT", text):
         block_start = item_match.start()
+        search_start, prev_item_end = prev_item_end, item_match.end()
 
         before = text[max(0, block_start - 700):block_start]
         candidate_lines = [
@@ -305,6 +367,13 @@ def parse_products(text):
         color_m = re.search(r"Size: \S+ - Color: (.+?)\s+\d", block)
         product["color"] = _full_color(block, color_m)
 
+        # Prefer the line item's own title (found by its colour) over the fixed-window
+        # guess above: it survives long descriptions and never reads spec copy.
+        title_line = _find_title_line(text, search_start, block_start, product["color"])
+        if title_line:
+            product["style_code"], product["product_name"] = _style_from_title(title_line)
+            product["title"] = title_line
+
         size_rows = re.findall(
             r"Size: (\S+) - Color: \S.*?\s+([\d,]+)\s+\$([\d,.]+)\s+\$([\d,.]+)", block
         )
@@ -324,6 +393,14 @@ def parse_products(text):
         product["decoration_locations"] = list(dict.fromkeys(
             [l for l in locations if "Mockup" not in l]
         ))
+
+        # (location, imprint type) per artwork, so a screen-printed neck label isn't
+        # mistaken for the garment's decoration
+        product["decorations"] = [
+            (loc.strip(), imp.strip())
+            for imp, loc in re.findall(r"IMPRINT TYPE\s+(.+)\nDESIGN LOCATION\s+(.+)", block)
+            if "Mockup" not in loc
+        ]
 
         imprint_types = re.findall(r"IMPRINT TYPE\s+(.+)", block)
         product["imprint_types"] = list(dict.fromkeys(

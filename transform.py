@@ -94,6 +94,7 @@ VALID_LOCATIONS = {
 
 # These valid locations are handled by dedicated Monday fields, not LOCATIONS column
 LOCATIONS_SEPARATE = {
+    "interior neck label",
     "printed neck tag",
     "printed neck label",
     "custom clip label",
@@ -112,6 +113,21 @@ LOCATIONS_SEPARATE = {
 }
 
 
+def _is_body_woven_label(loc):
+    """
+    True for a woven label sewn onto the body as the decoration
+    ("Woven Label - Left Chest", "Woven Label - Front Upper Left Side Pocket"),
+    as opposed to neck labels and hem/clip labels.
+    """
+    l = loc.lower()
+    return (
+        ("woven label" in l or "sewn label" in l)
+        and not any(k in l for k in ("neck", "hem", "clip", "bottom left", "interior"))
+        # must name a body placement — "Custom Woven Label" alone is a finishing label
+        and bool(re.search(r"\b(chest|pocket|sleeve|back|front|thigh|hip)\b", l))
+    )
+
+
 # ---------------------------------------------------------------------------
 # Field transformers
 # ---------------------------------------------------------------------------
@@ -119,6 +135,20 @@ LOCATIONS_SEPARATE = {
 def _client_name(client):
     """Strip trailing punctuation from client name."""
     return client.rstrip(".,") if client else None
+
+
+# Avid category prefixes that sit between "AV" and the supplier's style code
+# (AVN6210 -> 6210, AVCS1025 -> 1025, AVSWeRK250LS -> WeRK250LS). Longer codes first.
+_AV_CATEGORY_RE = re.compile(r"^AV(?:CS|LS|OC|C|L|M|N|S|W|Z)(?=[A-Za-z]*\d)")
+# Unknown category: the supplier code starts with its own brand letters
+# (AVIND330BLV -> IND330BLV), so only "AV" is dropped.
+_AV_ONLY_RE = re.compile(r"^AV(?=[A-Za-z]{2,}\d)")
+
+
+def _strip_av_prefix(code):
+    if _AV_CATEGORY_RE.match(code):
+        return _AV_CATEGORY_RE.sub("", code)
+    return _AV_ONLY_RE.sub("", code)
 
 
 def _garment_style(style_code):
@@ -132,11 +162,11 @@ def _garment_style(style_code):
     """
     if isinstance(style_code, list):
         return ", ".join(
-            re.sub(r"^AV[A-Z]+(?=\d)", "", c) for c in style_code if c
-        )
+            _strip_av_prefix(c) for c in style_code if c
+        ) or None
     if not style_code:
         return None
-    return re.sub(r"^AV[A-Z]+(?=\d)", "", style_code)
+    return _strip_av_prefix(style_code)
 
 
 def _in_hands_date(date_str):
@@ -169,6 +199,8 @@ LOCATION_NORMALISE = {
     "BACK CENTER PRINT":        "FULL BACK",
     "FRONT CENTRE PRINT":       "FRONT CENTER",
     "BACK CENTRE PRINT":        "FULL BACK",
+    # Bare "Back" (e.g. "Back Embroidery" once the method word is dropped)
+    "BACK":                     "FULL BACK",
     # Hat locations
     "HAT - FRONT":              "HAT - FRONT",
     "HAT - BACK CENTER":        "HAT - BACK CENTER",
@@ -212,7 +244,37 @@ def _hat_location(loc, product_text):
     return _HAT_EMBROIDERY_LOC_MAP[m.group(1)] if m else None
 
 
-_LOC_METHOD_SUFFIX_RE = re.compile(r"\s+(EMBROIDERY|PRINT|PRINTING|SCREENPRINT|SCREEN PRINT)$")
+_LOC_METHOD_SUFFIX_RE = re.compile(
+    r"\s+(EMBROIDERED PATCH|EMBROIDERED|PATCH|EMBROIDERY|PRINT|PRINTING|SCREENPRINT|SCREEN PRINT)$"
+)
+# Decoration-method words CommonSku users put in front of the placement,
+# e.g. "Patch - Left Chest", "Woven Label - Left Chest".
+_LOC_METHOD_PREFIX_RE = re.compile(
+    r"^(EMBROIDERED PATCH|PATCH|EMBROIDERY|PRINT|SCREENPRINT|WOVEN LABEL|SEWN LABEL)\s*-\s*"
+)
+
+
+def _location_candidates(loc_upper):
+    """
+    Spellings to try for one DESIGN LOCATION, most literal first:
+    the whole value, then without a leading method word ("Patch - Left Chest"),
+    then the part before a trailing qualifier ("Front Chest Print - Reflective Ink").
+    Each is also tried with a trailing method word dropped.
+    """
+    bases = [loc_upper]
+    no_prefix = _LOC_METHOD_PREFIX_RE.sub("", loc_upper).strip()
+    if no_prefix != loc_upper:
+        bases.append(no_prefix)
+    for b in list(bases):
+        if " - " in b:
+            bases.append(b.split(" - ", 1)[0].strip())
+    out = []
+    for b in bases:
+        out.append(b)
+        stripped = _LOC_METHOD_SUFFIX_RE.sub("", b).strip()
+        if stripped != b:
+            out.append(stripped)
+    return out
 
 
 def _normalise_location(loc, product_text=None):
@@ -228,11 +290,8 @@ def _normalise_location(loc, product_text=None):
         return hat
     valid_upper = {v.upper() for v in VALID_LOCATIONS}
     normalised = LOCATION_NORMALISE.get(loc_upper, loc_upper)
-    if normalised.upper() in valid_upper:
-        return normalised
-    stripped = _LOC_METHOD_SUFFIX_RE.sub("", loc_upper).strip()
-    if stripped != loc_upper:
-        alt = LOCATION_NORMALISE.get(stripped, stripped)
+    for cand in _location_candidates(loc_upper):
+        alt = LOCATION_NORMALISE.get(cand, cand)
         if alt.upper() in valid_upper:
             return alt
     return normalised
@@ -249,8 +308,9 @@ def _locations(decoration_locations, product_text=None):
     """
     locs = []
     for loc in decoration_locations:
-        # Skip anything handled by a dedicated field
-        if any(excl in loc.lower() for excl in LOCATIONS_SEPARATE):
+        # Skip anything handled by a dedicated field (body woven labels are decoration)
+        if (any(excl in loc.lower() for excl in LOCATIONS_SEPARATE)
+                and not _is_body_woven_label(loc)):
             continue
         # Normalise to Monday's exact label if a mapping exists
         normalised = _normalise_location(loc, product_text)
@@ -262,7 +322,25 @@ def _locations(decoration_locations, product_text=None):
     return ", ".join(locs) if locs else None
 
 
-def _decoration_type(imprint_types, full_text):
+def _garment_imprint_types(product):
+    """
+    Imprint types that decorate the garment itself. A neck label that happens to be
+    screen printed is the neck tag (NECK TAG TYPE), not the decoration, so it is left
+    out — unless nothing else is decorated, in which case the old behaviour stands.
+    """
+    pairs = product.get("decorations")
+    if not pairs:
+        return product.get("imprint_types", [])
+    body = []
+    for loc, imp in pairs:
+        if "neck" in loc.lower() or imp.lower() == "other":
+            continue
+        if imp not in body:
+            body.append(imp)
+    return body or product.get("imprint_types", [])
+
+
+def _decoration_type(imprint_types, full_text, decoration_locations=None):
     """
     Build DECORATION TYPE value(s) matching Monday's exact dropdown labels.
     Returns a comma-separated string of valid Monday decoration type labels.
@@ -273,6 +351,8 @@ def _decoration_type(imprint_types, full_text):
         mapped = IMPRINT_TYPE_MAP.get(t.lower().strip())
         if mapped and mapped not in base_types:
             base_types.append(mapped)
+    if any(_is_body_woven_label(l) for l in (decoration_locations or [])):
+        base_types.append("SEW LABEL")
 
     if not base_types:
         return None
@@ -312,6 +392,7 @@ def _neck_tag_type(decoration_locations, full_text):
         any(kw in loc.lower() for kw in ["woven neck", "woven label", "neck label", "woven clip"])
         and "printed" not in loc.lower()  # "Printed Neck Label" is screenprinted, not woven
         and "hem" not in loc.lower()  # exclude woven hem labels — those are clip labels
+        and not _is_body_woven_label(loc)  # chest/pocket woven labels are decoration
         for loc in decoration_locations
     )
     if has_woven_neck:
@@ -367,6 +448,8 @@ def _clip_label_details(full_text):
         if not loc_m:
             continue
         loc = loc_m.group(1).lower()
+        if _is_body_woven_label(loc):
+            continue
         is_clip = (
             "clip label" in loc or
             ("woven label" in loc and "neck" not in loc) or
@@ -398,7 +481,8 @@ def _yes_no_flags(decoration_locations, services, full_text):
     # Clip label: woven hem/side labels, explicit clip labels
     is_clip = any(
         ("clip label" in t.lower()) or
-        ("woven label" in t.lower() and "neck" not in t.lower()) or
+        ("woven label" in t.lower() and "neck" not in t.lower()
+         and not _is_body_woven_label(t)) or
         ("woven" in t.lower() and "hem" in t.lower())
         for t in decoration_locations + [s["service"] for s in services]
         if isinstance(t, str)
@@ -562,13 +646,46 @@ _TITLE_DESCRIPTOR_RE = re.compile(
 )
 
 
-def _primary_design_name(full_text, color=None):
+def _artwork_after_colour(title, color):
+    """
+    Everything after the colour in a product title:
+    "AVIND330BLV Boulevard Hood - Black - Core Hoodie" -> "Core Hoodie".
+    Trailing BULK QTY / Replen markers and project / order-type descriptors are dropped,
+    as in _primary_design_name.
+    """
+    if not title or not color:
+        return None
+    col = color.split("/")[0].strip().lower()
+    parts = re.split(r"\s+-\s+", title)
+    color_idx = next((j for j, p in enumerate(parts) if p.strip().lower() == col), None)
+    if color_idx is None:
+        color_idx = next((j for j, p in enumerate(parts) if col and col in p.lower()), None)
+    if color_idx is None:
+        return None
+    remaining = parts[color_idx + 1:]
+    suffix_re = re.compile(r'^(BULK\s*QTY|Replen\b|Replenishment)$', re.IGNORECASE)
+    while remaining and suffix_re.match(remaining[-1].strip()):
+        remaining.pop()
+    if not remaining:
+        return None
+    kept = [remaining[0]]
+    for seg in remaining[1:]:
+        if _TITLE_DESCRIPTOR_RE.search(seg):
+            break
+        kept.append(seg)
+    return " - ".join(p.strip() for p in kept).strip() or None
+
+
+def _primary_design_name(full_text, color=None, title=None):
     """
     Extract artwork name for non-Troll Co orders.
     Prefers the // title line: splits by ' - ', takes segments after the color,
     strips trailing BULK QTY / Replen suffixes, joins with space.
     Falls back to first non-neck-tag DESIGN NAME block.
     """
+    from_title = _artwork_after_colour(title, color)
+    if from_title:
+        return from_title
     lines = full_text.split('\n')
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -824,7 +941,8 @@ def to_monday(order, product, full_text=""):
                                       f'{product.get("title") or ""} {product.get("product_name") or ""}',
                                   ),
         "DECORATION TYPE":        _decoration_type(
-                                      product.get("imprint_types", []), full_text
+                                      _garment_imprint_types(product), full_text,
+                                      product.get("decoration_locations", []),
                                   ),
         "NECK TAG TYPE":          _neck_tag_type(
                                       product.get("decoration_locations", []), full_text
@@ -840,7 +958,7 @@ def to_monday(order, product, full_text=""):
 
         # Troll Co specific fields — only populated for Troll Co orders
         "Troll Co Style #":       _get_tc_number(full_text, product.get("title")) if _is_troll_co(order.get("client", "")) else None,
-        "ARTWORK":                _get_artwork_name(full_text, product.get("title")) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text, product.get("color")),
+        "ARTWORK":                _get_artwork_name(full_text, product.get("title")) if _is_troll_co(order.get("client", "")) else _primary_design_name(full_text, product.get("color"), product.get("title")),
 
         # Repeat order detection
         "REPEAT ORDER?":          "REPEAT ORDER" if _is_repeat_order(full_text) else "NEW ORDER",
